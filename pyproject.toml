@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tera"
+version = "0.1.0"
+description = "TeraBox CLI - Bypass download/upload limitations"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "requests>=2.31",
+    "rich>=13.0",
+    "aiohttp>=3.9",
+]
+
+[project.scripts]
+tera = "tera.cli:main"
+"tera-dl" = "tera.cli:download_standalone"
+
+[tool.setuptools.packages.find]
+include = ["tera*"]

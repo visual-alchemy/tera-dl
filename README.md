@@ -16,22 +16,31 @@ A Python-based command-line interface (CLI) tool designed to bypass standard dow
 
 ## Installation
 
-### 1. Set Up Virtual Environment (Recommended)
-Before installing, it's recommended to isolate your dependencies inside a virtual environment:
+### Option 1: pipx (Recommended)
+`pipx` installs Python CLI tools globally without needing a virtual environment. It automatically creates an isolated environment for each package.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+# Install pipx if you don't have it
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+
+# Install tera-dl
+pipx install tera-dl
 ```
 
-### 2. Install Project Dependencies
-Install the package in **editable mode** so that changes to the code are instantly reflected in the CLI executable:
+After installation, `tera` and `tera-dl` commands are available globally.
 
+### Option 2: pip (user install)
 ```bash
-pip install -e .
+pip install --user tera-dl
 ```
 
-After installation, the global command `tera` will be available in your activated environment.
+### Option 3: From source
+```bash
+git clone https://github.com/visual-alchemy/tera-dl.git
+cd tera-dl
+pip install .
+```
 
 ---
 
@@ -39,17 +48,39 @@ After installation, the global command `tera` will be available in your activate
 
 Because TeraBox uses session protection, you need to import your authenticated browser session into the CLI.
 
-1. Open your web browser and log in to [TeraBox](https://www.terabox.com).
-2. Open Developer Tools (**F12** or **Cmd + Option + I** on macOS) and navigate to the **Network** tab.
-3. Refresh the page or click on any directory.
-4. Run the interactive login command in your terminal:
+1. Open your web browser and log in to [1024TeraBox](https://1024terabox.com).
+2. Open Developer Tools (**F12** or **Cmd + Option + I** on macOS) → **Application** → **Cookies** → `https://1024terabox.com`.
+3. Find and copy these cookie values:
+   - **`ndus`**: Your session cookie (typically starts with `2:`).
+   - **`BDUSS`**: Required for uploads. If not visible, uploads may still work via rapid upload.
+4. Run the interactive login command:
    ```bash
    tera auth login
    ```
-5. Extract and paste the following values when prompted:
-   - **`ndus`**: Go to Developer Tools -> **Application** (or **Storage**) -> **Cookies** -> `https://www.terabox.com`, find `ndus`, and copy the entire value (starts with `2:`).
-   - **`jsToken`**: Go to the **Network** tab search (Cmd/Ctrl + F) for `jsToken` and extract the value from any query parameter.
-   - **`bdstoken`**: Go to the **Console** tab, run `locals.bdstoken`, and copy the 32-character output.
+5. Paste the `ndus` and `BDUSS` values when prompted. `jsToken` and `bdstoken` are auto-extracted.
+
+---
+
+## TUI Mode (Midnight Commander Style)
+
+Launch an interactive dual-pane file manager — local filesystem on the left, TeraBox drive on the right:
+
+```bash
+tera tui
+```
+
+| Key | Action |
+|---|---|
+| `Tab` | Switch between panes |
+| `Enter` / `→` | Open folder |
+| `←` / `Backspace` | Go to parent directory |
+| `Space` / `Insert` | Mark file for batch operation |
+| `F2` | Rename |
+| `F5` | Copy (upload/download marked or selected files) |
+| `F7` | Create directory |
+| `F8` | Delete (marked or selected) |
+| `r` | Refresh pane |
+| `q` | Quit |
 
 ---
 

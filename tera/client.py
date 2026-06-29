@@ -16,6 +16,8 @@ class TeraBoxClient:
         self.session.headers.update(HEADERS)
         self.session.cookies.set("ndus", config.auth.ndus)
         self.session.cookies.set("PANWEB", config.auth.panweb)
+        if config.auth.bduss:
+            self.session.cookies.set("BDUSS", config.auth.bduss)
         # Auto-refresh tokens on initialization to prevent expired jsToken errors
         if config.auth.is_valid:
             self.refresh_tokens()
@@ -26,7 +28,12 @@ class TeraBoxClient:
             resp = self.session.get(f"{API_DOMAIN}/main", timeout=10)
             resp.raise_for_status()
             html = resp.text
-            
+
+            # Capture BDUSS cookie if present in response
+            for cookie in self.session.cookies:
+                if cookie.name == "BDUSS" and cookie.value:
+                    self.config.auth.bduss = cookie.value
+
             # Extract jsToken
             import urllib.parse
             js_token_match = re.search(r'["\']jsToken["\']\s*[:=]\s*["\']([^"\']+)["\']', html)

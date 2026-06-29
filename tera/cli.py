@@ -229,6 +229,22 @@ def config_cmd(ctx, set_download_dir, set_workers):
         console.print(f"  Auth: {'Configured' if config.auth.is_valid else 'Not configured'}")
 
 
+@main.command("tui")
+@click.pass_context
+def tui_cmd(ctx):
+    """Launch MC-style dual-pane file manager."""
+    config = get_config(ctx)
+    if not config.auth.is_valid:
+        console.print("[red]Not authenticated. Run: tera auth login[/red]")
+        raise click.Abort()
+    try:
+        from .tui import run_tui
+    except ImportError:
+        console.print("[red]textual not installed. Run: pip install textual[/red]")
+        raise click.Abort()
+    run_tui(config)
+
+
 @click.command()
 @click.argument("sources", nargs=-1, required=True)
 @click.option("-o", "--output", default=None, help="Output directory")

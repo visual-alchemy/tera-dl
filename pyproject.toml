@@ -12,6 +12,7 @@ dependencies = [
     "requests>=2.31",
     "rich>=13.0",
     "aiohttp>=3.9",
+    "textual>=0.40",
 ]
 
 [project.scripts]

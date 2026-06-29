@@ -80,45 +80,44 @@ def upload_file(
     needed_blocks = result.get("block_list", [])
 
     if not needed_blocks:
-        console.print("[green]Rapid upload succeeded![/green] The file already exists on TeraBox.")
-        return result
+        console.print("[dim]Rapid upload — file content already in cloud, finalizing at new path...[/dim]")
+    else:
+        console.print(f"[dim]Need to upload {len(needed_blocks)} block(s)[/dim]")
 
-    console.print(f"[dim]Need to upload {len(needed_blocks)} block(s)[/dim]")
+        # Step 2: Upload chunks
+        pcs_url = "https://data.1024terabox.com/rest/2.0/pcs/superfile2"
 
-    # Step 2: Upload chunks
-    pcs_url = "https://szb-cdata.1024terabox.com/rest/2.0/pcs/superfile2"
+        with Progress(
+            TextColumn("[bold blue]{task.description}[/bold blue]"),
+            BarColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            upload_task = progress.add_task("Uploading...", total=len(needed_blocks))
 
-    with Progress(
-        TextColumn("[bold blue]{task.description}[/bold blue]"),
-        BarColumn(),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
-        upload_task = progress.add_task("Uploading...", total=len(needed_blocks))
+            with open(filepath, "rb") as f:
+                for block_idx in needed_blocks:
+                    f.seek(block_idx * CHUNK_SIZE)
+                    chunk = f.read(CHUNK_SIZE)
 
-        with open(filepath, "rb") as f:
-            for block_idx in needed_blocks:
-                f.seek(block_idx * CHUNK_SIZE)
-                chunk = f.read(CHUNK_SIZE)
+                    files = {"file": ("blob", chunk, "application/octet-stream")}
+                    params = {
+                        "method": "upload",
+                        "app_id": "250528",
+                        "uploadid": uploadid,
+                        "path": remote_path,
+                        "partseq": str(block_idx),
+                        "uploadsign": "0",
+                    }
 
-                files = {"file": ("blob", chunk, "application/octet-stream")}
-                params = {
-                    "method": "upload",
-                    "app_id": "250528",
-                    "uploadid": uploadid,
-                    "path": remote_path,
-                    "partseq": str(block_idx),
-                    "uploadsign": "0",
-                }
-
-                resp = client.session.post(
-                    pcs_url,
-                    params=params,
-                    files=files,
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                progress.update(upload_task, advance=1)
+                    resp = client.session.post(
+                        pcs_url,
+                        params=params,
+                        files=files,
+                        timeout=120,
+                    )
+                    resp.raise_for_status()
+                    progress.update(upload_task, advance=1)
 
     # Step 3: Create (finalize)
     console.print("[dim]Finalizing upload...[/dim]")

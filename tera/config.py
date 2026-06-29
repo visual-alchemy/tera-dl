@@ -31,6 +31,7 @@ HEADERS = {
 @dataclass
 class AuthConfig:
     ndus: str = ""
+    bduss: str = ""
     js_token: str = ""
     bdstoken: str = ""
     panweb: str = "1"
@@ -41,6 +42,8 @@ class AuthConfig:
 
     def cookie_string(self) -> str:
         parts = [f"ndus={self.ndus}", f"PANWEB={self.panweb}"]
+        if self.bduss:
+            parts.append(f"BDUSS={self.bduss}")
         return "; ".join(parts)
 
 

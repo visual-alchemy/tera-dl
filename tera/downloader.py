@@ -370,28 +370,40 @@ def download_from_share(
 
     all_files = []
 
+    def _api_call_with_retry(fn, *args, label="API call", **kwargs):
+        """Call an API function with retry on rate limit (400141)."""
+        delays = [15, 30, 60, 120, 300]
+        for attempt in range(len(delays) + 1):
+            try:
+                return fn(*args, **kwargs)
+            except TeraBoxError as e:
+                if "rate_limit" not in str(e).lower() and "400141" not in str(e):
+                    raise
+                if attempt < len(delays):
+                    wait = delays[attempt]
+                    console.print(f"[yellow]Rate limit — retrying in {wait}s (attempt {attempt+2}/{len(delays)+1})...[/yellow]")
+                    time.sleep(wait)
+                    continue
+                raise
+
     def traverse(dir_path: str = "", rel_subfolder: str = ""):
         try:
-            time.sleep(0.3)  # throttle API calls to avoid rate limit
-            items = client.get_share_files(share_url, pwd, dir_path)
-        except TeraBoxError as e:
-            if "rate_limit" in str(e).lower() or "400141" in str(e):
-                console.print("[yellow]TeraBox rate limit — waiting 15s...[/yellow]")
-                time.sleep(15)
-                items = client.get_share_files(share_url, pwd, dir_path)
-            else:
-                raise
-        try:
-            for item in items:
-                name = item.get("server_filename", "unknown")
-                if int(item.get("isdir") or 0) == 1:
-                    new_rel = os.path.join(rel_subfolder, name) if rel_subfolder else name
-                    traverse(item.get("path"), new_rel)
-                else:
-                    item["rel_subfolder"] = rel_subfolder
-                    all_files.append(item)
+            items = _api_call_with_retry(
+                client.get_share_files, share_url, pwd, dir_path,
+                label=f"listing {dir_path or '/'}"
+            )
         except TeraBoxError as e:
             console.print(f"[red]Error listing directory {dir_path or '/'}: {e}[/red]")
+            return
+
+        for item in items:
+            name = item.get("server_filename", "unknown")
+            if int(item.get("isdir") or 0) == 1:
+                new_rel = os.path.join(rel_subfolder, name) if rel_subfolder else name
+                traverse(item.get("path"), new_rel)
+            else:
+                item["rel_subfolder"] = rel_subfolder
+                all_files.append(item)
 
     traverse()
 
@@ -429,16 +441,16 @@ def download_from_share(
         dlink = f.get("dlink")
         if not dlink:
             try:
-                time.sleep(0.2)  # throttle dlink requests
-                dlink = client.get_share_dlink(share_url, fs_id, pwd)
+                dlink = _api_call_with_retry(
+                    client.get_share_dlink, share_url, fs_id, pwd,
+                    label=f"dlink for {name}"
+                )
             except TeraBoxError as e:
                 if "rate_limit" in str(e).lower() or "400141" in str(e):
-                    console.print("[yellow]Rate limit — waiting 15s...[/yellow]")
-                    time.sleep(15)
-                    dlink = client.get_share_dlink(share_url, fs_id, pwd)
+                    console.print(f"[red]Could not get link for {name}: rate limited[/red]")
                 else:
                     console.print(f"[red]Could not get link for {name}: {e}[/red]")
-                    continue
+                continue
         tasks.append(DownloadTask(url=dlink, filename=target_name, dest_dir=dest_dir, size=size))
 
     if not tasks:

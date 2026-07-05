@@ -115,7 +115,10 @@ def download(ctx, sources, output, workers, pwd):
     dest = output or config.download_dir
     w = workers or config.workers
 
-    for source in sources:
+    import time
+    for i, source in enumerate(sources):
+        if i > 0 and TeraBoxClient.parse_share_url(source):
+            time.sleep(1.0)  # throttle between share links to avoid rate limit
         results = download_single(client, source, dest, workers=w, pwd=pwd)
         if results:
             print_download_summary(results)
@@ -260,7 +263,10 @@ def download_standalone(ctx, sources, output, workers, pwd):
     dest = output or config.download_dir
     w = workers or config.workers
 
-    for source in sources:
+    import time
+    for i, source in enumerate(sources):
+        if i > 0 and TeraBoxClient.parse_share_url(source):
+            time.sleep(1.0)  # throttle between share links to avoid rate limit
         results = download_single(client, source, dest, workers=w, pwd=pwd)
         if results:
             print_download_summary(results)

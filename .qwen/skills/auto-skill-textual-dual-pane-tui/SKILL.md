@@ -729,3 +729,75 @@ for f in files:
 
 If files exist on remote but not in pane → refresh bug (see fix above).
 If files don't exist on remote either → upload silently failed (see section 7: rich Progress crash).
+
+## 16. Rate limiting — 400141 "need verify"
+
+TeraBox returns `errno=400141, errmsg="need verify"` when API calls exceed the rate limit (~25 calls in 3 seconds). This is a CAPTCHA/verification challenge, not a permanent error.
+
+### Symptoms
+- 25+ identical error log entries within seconds
+- No files are actually transferred
+- Error only appears mid-batch, not on individual calls
+
+### Fix: multi-layer throttle
+
+| Level | Delay | Purpose |
+|-------|-------|---------|
+| Between share links | 1.0s | CLI: `for source in sources` loop |
+| Within share folder tree | 0.3s | Each `traverse()` call to `/share/list` |
+| Per-file dlink request | 0.2s | Each `get_share_dlink()` call |
+| Pane refresh | debounce | Skip if another refresh is in-flight for same pane |
+
+### Debounce pane refreshes with a lock dict
+
+```python
+def __init__(self, ...):
+    self._refresh_lock: dict[str, bool] = {}
+
+@work(thread=True)
+def _do_refresh(self, pane_name):
+    if self._refresh_lock.get(pane_name):
+        return  # already refreshing this pane
+    self._refresh_lock[pane_name] = True
+    try:
+        # ... list and populate ...
+    finally:
+        self._refresh_lock[pane_name] = False
+```
+
+### Catch and show rate limit clearly
+
+```python
+except TeraBoxError as e:
+    if "400141" in str(e) or "need verify" in str(e).lower():
+        self.call_from_thread(self._status,
+            "[red]TeraBox rate limit — wait 30s then press r to refresh[/red]")
+    else:
+        self.call_from_thread(self._status, f"[red]Error: {e}[/red]")
+```
+
+## 17. Persistent API error logging
+
+Status bars are short-lived. When errors flash by too fast to read, log ALL API errors to a persistent file with full response body:
+
+```python
+def _check_errno(self, data, context=""):
+    errno = data.get("errno", -1)
+    if errno != 0:
+        msg = f"API error (errno={errno}): {data.get('errmsg', 'unknown')}"
+        # Log to persistent file
+        from .config import CONFIG_DIR
+        log = CONFIG_DIR / "api_errors.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "a") as f:
+            f.write(f"{datetime.now().isoformat()} {msg}\n")
+            f.write(f"  full response: {data}\n")
+        raise TeraBoxError(msg)
+```
+
+This makes `errno=400141` debuggable — the full `errmsg` and response body are preserved even when the status bar overwrites them.
+
+**Diagnosis after the fact:**
+```bash
+cat ~/.config/tera/api_errors.log
+```

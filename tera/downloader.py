@@ -365,13 +365,23 @@ def download_from_share(
     pwd: str = "",
 ) -> list[DownloadTask]:
     """Download all files from a share link recursively."""
+    import time
     console.print(f"\n[bold cyan]Resolving share link...[/bold cyan]")
 
     all_files = []
 
     def traverse(dir_path: str = "", rel_subfolder: str = ""):
         try:
+            time.sleep(0.3)  # throttle API calls to avoid rate limit
             items = client.get_share_files(share_url, pwd, dir_path)
+        except TeraBoxError as e:
+            if "rate_limit" in str(e).lower() or "400141" in str(e):
+                console.print("[yellow]TeraBox rate limit — waiting 15s...[/yellow]")
+                time.sleep(15)
+                items = client.get_share_files(share_url, pwd, dir_path)
+            else:
+                raise
+        try:
             for item in items:
                 name = item.get("server_filename", "unknown")
                 if int(item.get("isdir") or 0) == 1:
@@ -412,17 +422,23 @@ def download_from_share(
         fs_id = f.get("fs_id", 0)
         size = int(f.get("size") or 0)
         rel_sub = f.get("rel_subfolder", "")
-        
+
         # Combine relative subfolder with filename to preserve folder hierarchy
         target_name = os.path.join(rel_sub, name) if rel_sub else name
 
         dlink = f.get("dlink")
         if not dlink:
             try:
+                time.sleep(0.2)  # throttle dlink requests
                 dlink = client.get_share_dlink(share_url, fs_id, pwd)
             except TeraBoxError as e:
-                console.print(f"[red]Could not get link for {name}: {e}[/red]")
-                continue
+                if "rate_limit" in str(e).lower() or "400141" in str(e):
+                    console.print("[yellow]Rate limit — waiting 15s...[/yellow]")
+                    time.sleep(15)
+                    dlink = client.get_share_dlink(share_url, fs_id, pwd)
+                else:
+                    console.print(f"[red]Could not get link for {name}: {e}[/red]")
+                    continue
         tasks.append(DownloadTask(url=dlink, filename=target_name, dest_dir=dest_dir, size=size))
 
     if not tasks:

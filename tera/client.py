@@ -86,7 +86,22 @@ class TeraBoxClient:
                     f.write(f"  full response: {data}\n")
             except Exception:
                 pass
+            if errno == 400141:
+                raise TeraBoxError(f"rate_limit")
             raise TeraBoxError(msg)
+
+    def _request_with_retry(self, fn, *args, max_retries: int = 5, **kwargs):
+        """Call an API function with exponential backoff on rate limit (400141)."""
+        import time
+        for attempt in range(max_retries):
+            try:
+                return fn(*args, **kwargs)
+            except TeraBoxError as e:
+                if "rate_limit" in str(e) and attempt < max_retries - 1:
+                    wait = min((2 ** attempt), 30)
+                    time.sleep(wait)
+                    continue
+                raise
 
     # ── Share link resolution ──────────────────────────────────────────
 
@@ -177,6 +192,7 @@ class TeraBoxClient:
             return resp.headers.get("Location", "")
 
         data = resp.json()
+        self._check_errno(data)
         if "dlink" in data:
             return data["dlink"]
 

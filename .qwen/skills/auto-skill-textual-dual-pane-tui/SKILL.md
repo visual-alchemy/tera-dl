@@ -801,3 +801,101 @@ This makes `errno=400141` debuggable — the full `errmsg` and response body are
 ```bash
 cat ~/.config/tera/api_errors.log
 ```
+
+## 18. Connection drops as severe rate limiting — retry ALL HTTP errors
+
+After hitting rate limits, TeraBox may escalate from returning `400141` JSON to **dropping TCP connections entirely** (`RemoteDisconnected`, `ConnectionError`). These are not transient network glitches — they're the server actively refusing service.
+
+### Symptom
+
+```
+http.client.RemoteDisconnected: Remote end closed connection without response
+urllib3.exceptions.ProtocolError: ('Connection aborted.', RemoteDisconnected(...))
+requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected(...))
+```
+
+### Fix: catch `ConnectionError` in retry loop alongside `TeraBoxError`
+
+```python
+import requests as req_lib
+
+delays = [15, 30, 60, 120, 300]  # up to ~9 min total
+for attempt in range(len(delays) + 1):
+    try:
+        return fn(*args, **kwargs)
+    except TeraBoxError as e:
+        if "rate_limit" in str(e).lower() or "400141" in str(e):
+            if attempt < len(delays):
+                time.sleep(delays[attempt])
+                continue
+        raise
+    except req_lib.exceptions.ConnectionError as e:
+        if attempt < len(delays):
+            console.print(f"Connection dropped — retrying in {delays[attempt]}s...")
+            time.sleep(delays[attempt])
+            continue
+        raise TeraBoxError(f"Connection failed after {len(delays)+1} attempts: {e}")
+```
+
+### Key insights
+
+- **Connection drops ARE rate limiting** — don't treat them as network failures; retry with the same backoff as 400141
+- **Don't retry indefinitely** — after ~9 min of backoff, surface the error; the user's account is likely in a hard penalty box (30+ min)
+- **`requests.exceptions.Timeout` is a subclass of `ConnectionError`** — one handler catches timeouts, connection resets, and remote disconnects
+- **Tell the user to wait** — if all retries fail, the account needs 30+ minutes of idle time before TeraBox lifts the block
+
+## 19. API endpoints that bypass error checking — `get_share_dlink`
+
+Some API wrapper methods in a client class may call `resp.json()` and check for a specific field (e.g., `"dlink"`) without first passing the response through `_check_errno()`. 400141 errors get swallowed as generic "Could not get download link" messages, making rate limiting undetectable.
+
+**Pattern:** Every method that reads a JSON API response must call `_check_errno(data)` before inspecting other fields:
+
+```python
+# WRONG — 400141 is swallowed
+data = resp.json()
+if "dlink" in data:
+    return data["dlink"]
+raise TeraBoxError("Could not get download link")
+
+# RIGHT — 400141 surfaces cleanly
+data = resp.json()
+self._check_errno(data)  # raises TeraBoxError("rate_limit") on 400141
+if "dlink" in data:
+    return data["dlink"]
+raise TeraBoxError("Could not get download link")
+```
+
+### Retry logic compatibility
+
+When `_check_errno` raises `TeraBoxError("rate_limit")` on 400141, the retry loop in the downloader can catch `"rate_limit" in str(e)` and backoff. Without `_check_errno`, the error is generic, and the retry logic doesn't recognize it.
+
+## 20. Python version upgrade breaks pip-installed scripts (Termux/Linux)
+
+When the system Python is upgraded (e.g., 3.13 → 3.14 by Termux `pkg upgrade`), pip-installed CLI scripts have hardcoded shebangs pointing to the old Python path:
+
+```bash
+$ head -1 /data/data/com.termux/files/usr/bin/tera
+#!/data/data/com.termux/files/usr/bin/python3.13  # STALE — python3.13 no longer exists
+
+$ tera --version
+bash: /data/data/com.termux/files/usr/bin/tera: /data/data/com.termux/files/usr/bin/python3.13:
+bad interpreter: No such file or directory
+```
+
+**Fix:** Reinstall from source to regenerate scripts with the current Python path:
+
+```bash
+cd /path/to/project
+pip install -e .
+```
+
+This regenerates all console_scripts entry points with the current Python interpreter's path.
+
+**Prevention:** For Termux-specific projects, document this in README troubleshooting section. The `pip install -e .` command is idempotent and fast when dependencies are already installed.
+
+### Check current Python version if you're unsure:
+
+```bash
+ls /data/data/com.termux/files/usr/bin/python*     # see what Python binary exists
+head -1 $(which tera)                               # check what shebang tera uses
+```

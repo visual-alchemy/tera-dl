@@ -241,8 +241,11 @@ class TeraBoxClient:
         # Some responses include dlink in JSON
         try:
             data = resp.json()
+            self._check_errno(data)
             if "dlink" in data:
                 return data["dlink"]
+        except TeraBoxError:
+            raise
         except Exception:
             pass
 

@@ -16,9 +16,20 @@ def extract_tokens(ndus: str) -> tuple[str, str, str]:
     session.headers.update(HEADERS)
 
     try:
-        resp = session.get(f"{API_DOMAIN}/main", timeout=15)
+        resp = session.get(f"{API_DOMAIN}/main", timeout=15, allow_redirects=True)
+        # If we get redirected to login, ndus is invalid/expired
+        if "passport" in resp.url.lower() or "login" in resp.url.lower():
+            raise AuthError(
+                "ndus cookie is invalid or expired. "
+                "Please log in to https://1024terabox.com in your browser and get a fresh ndus cookie."
+            )
         resp.raise_for_status()
         html = resp.text
+    except requests.exceptions.TooManyRedirects:
+        raise AuthError(
+            "Too many redirects — your ndus cookie appears to be invalid or expired. "
+            "Please get a fresh ndus from your browser."
+        )
     except Exception as e:
         raise AuthError(f"Failed to fetch main page: {e}")
 

@@ -238,6 +238,14 @@ class FilePane(Vertical):
             self.marked.add(idx)
         self._redraw(idx)
 
+    def toggle_mark_all(self) -> None:
+        all_marked = all(i in self.marked for i in range(len(self.entries)) if self.entries[i].name != "..")
+        if all_marked:
+            self.marked.clear()
+        else:
+            self.marked = {i for i in range(len(self.entries)) if self.entries[i].name != ".."}
+        self._redraw()
+
     def _redraw(self, cursor_idx: int = 0) -> None:
         lv = self.query_one("#file-list", ListView)
         lv.clear()
@@ -379,6 +387,7 @@ class TeraBoxTUI(App):
         Binding("f7", "mkdir", "Mkdir"),
         Binding("f8", "delete", "Delete"),
         Binding("insert", "toggle_mark", "Mark"),
+        Binding("a", "select_all", "Select All"),
         Binding("r", "refresh", "Refresh"),
         Binding("q", "quit", "Quit"),
     ]
@@ -388,6 +397,7 @@ class TeraBoxTUI(App):
         self.client = client
         self.config = config
         self._active = "local"
+        self._refresh_lock: dict[str, bool] = {}  # debounce per-pane refreshes
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -427,6 +437,10 @@ class TeraBoxTUI(App):
 
     @work(thread=True)
     def _do_refresh(self, pane_name: str) -> None:
+        import time
+        if self._refresh_lock.get(pane_name):
+            return  # already refreshing this pane
+        self._refresh_lock[pane_name] = True
         try:
             pane = self._get_pane(pane_name)
             backend = pane.backend
@@ -436,8 +450,16 @@ class TeraBoxTUI(App):
                 entries = [FileEntry(name="..", is_dir=True, size=0, path=backend.parent(cwd))] + entries
             self.call_from_thread(pane.populate, entries)
             self.call_from_thread(self._status, f"[green]{pane_name}: {cwd} ({len(entries)} items)[/green]")
+        except TeraBoxError as e:
+            err = str(e)
+            if "400141" in err or "need verify" in err.lower():
+                self.call_from_thread(self._status, "[red]TeraBox rate limit — wait 30s then press r to refresh[/red]")
+            else:
+                self.call_from_thread(self._status, f"[red]Error listing {pane_name}: {e}[/red]")
         except Exception as e:
             self.call_from_thread(self._status, f"[red]Error listing {pane_name} {cwd}: {e}[/red]")
+        finally:
+            self._refresh_lock[pane_name] = False
 
     def _refresh_pane_from_worker(self, pane_name: str) -> None:
         """Refresh pane when already inside a worker thread."""
@@ -509,6 +531,12 @@ class TeraBoxTUI(App):
             return
         pane = self._active_pane()
         pane.toggle_mark()
+
+    def action_select_all(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        pane = self._active_pane()
+        pane.toggle_mark_all()
 
     def action_parent(self) -> None:
         if isinstance(self.screen, ModalScreen):

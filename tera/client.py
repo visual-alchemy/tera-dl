@@ -69,10 +69,24 @@ class TeraBoxClient:
             p.update(extra)
         return p
 
-    def _check_errno(self, data: dict):
+    def _check_errno(self, data: dict, context: str = ""):
         errno = data.get("errno", -1)
         if errno != 0:
-            raise TeraBoxError(f"API error (errno={errno}): {data.get('errmsg', 'unknown')}")
+            msg = f"API error (errno={errno}): {data.get('errmsg', 'unknown')}"
+            if context:
+                msg = f"[{context}] {msg}"
+            # Log all non-zero API errors for debugging
+            from .config import CONFIG_DIR
+            try:
+                log = CONFIG_DIR / "api_errors.log"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                from datetime import datetime
+                with open(log, "a") as f:
+                    f.write(f"{datetime.now().isoformat()} {msg}\n")
+                    f.write(f"  full response: {data}\n")
+            except Exception:
+                pass
+            raise TeraBoxError(msg)
 
     # ── Share link resolution ──────────────────────────────────────────
 

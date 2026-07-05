@@ -371,20 +371,27 @@ def download_from_share(
     all_files = []
 
     def _api_call_with_retry(fn, *args, label="API call", **kwargs):
-        """Call an API function with retry on rate limit (400141)."""
+        """Call an API function with retry on rate limit (400141) or connection drops."""
+        import requests as req_lib
         delays = [15, 30, 60, 120, 300]
         for attempt in range(len(delays) + 1):
             try:
                 return fn(*args, **kwargs)
             except TeraBoxError as e:
-                if "rate_limit" not in str(e).lower() and "400141" not in str(e):
-                    raise
+                if "rate_limit" in str(e).lower() or "400141" in str(e):
+                    if attempt < len(delays):
+                        wait = delays[attempt]
+                        console.print(f"[yellow]Rate limit — retrying in {wait}s (attempt {attempt+2}/{len(delays)+1})...[/yellow]")
+                        time.sleep(wait)
+                        continue
+                raise
+            except req_lib.exceptions.ConnectionError as e:
                 if attempt < len(delays):
                     wait = delays[attempt]
-                    console.print(f"[yellow]Rate limit — retrying in {wait}s (attempt {attempt+2}/{len(delays)+1})...[/yellow]")
+                    console.print(f"[yellow]Connection dropped — retrying in {wait}s (attempt {attempt+2}/{len(delays)+1})...[/yellow]")
                     time.sleep(wait)
                     continue
-                raise
+                raise TeraBoxError(f"Connection failed after {len(delays)+1} attempts: {e}")
 
     def traverse(dir_path: str = "", rel_subfolder: str = ""):
         try:

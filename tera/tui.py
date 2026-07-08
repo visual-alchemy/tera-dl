@@ -671,33 +671,107 @@ class TeraBoxTUI(App):
         pane = self._active_pane()
         other = self._inactive_pane()
 
-        # Gather files: marked entries take priority, else single highlighted
-        marked = pane.marked_entries()
-        if marked:
-            files = [e for e in marked if not e.is_dir and e.name != ".."]
-        else:
+        # Gather entries: marked entries take priority, else single highlighted
+        entries = pane.marked_entries()
+        if not entries:
             entry = pane.selected_entry()
             if not entry or entry.name == "..":
                 self._status("[yellow]No file selected — mark files with Insert or highlight one[/yellow]")
                 return
-            if entry.is_dir:
-                self._status("[yellow]Directory copy not supported yet — select files[/yellow]")
-                return
-            files = [entry]
-
-        if not files:
-            self._status("[yellow]No files to copy[/yellow]")
-            return
+            entries = [entry]
 
         dest_dir = other.cwd
-        total = len(files)
 
         if pane.backend.is_local:
-            self._do_batch_upload([f.path for f in files], [f.name for f in files], dest_dir)
+            self._do_upload_entries(entries, dest_dir)
         else:
+            # Download — directories not supported yet
+            files = [e for e in entries if not e.is_dir and e.name != ".."]
+            if not files:
+                self._status("[yellow]Directory download not supported yet[/yellow]")
+                return
             self._do_batch_download(
                 [(f.path, f.name, f.size) for f in files], dest_dir
             )
+
+    @work(thread=True)
+    def _do_upload_entries(self, entries: list[FileEntry], remote_dir: str) -> None:
+        """Upload entries (files + directories) recursively to remote_dir."""
+        import os as _os
+        # Flatten: collect all files + directories to create
+        dirs_to_create = []   # list of remote paths
+        files_to_upload = []  # list of (local_path, remote_path) tuples
+
+        for entry in entries:
+            if entry.name == "..":
+                continue
+            if entry.is_dir:
+                # Walk directory recursively
+                dir_name = Path(entry.path).name
+                remote_base = f"{remote_dir.rstrip('/')}/{dir_name}"
+                dirs_to_create.append(remote_base)
+                for root, dirs, filenames in _os.walk(entry.path):
+                    rel_root = Path(root).relative_to(entry.path)
+                    # Create subdirectories
+                    for d in dirs:
+                        sub_remote = f"{remote_base}/{rel_root / d}".replace("\\", "/")
+                        dirs_to_create.append(sub_remote)
+                    # Queue files
+                    for f in filenames:
+                        local_path = _os.path.join(root, f)
+                        sub_remote = f"{remote_base}/{rel_root / f}".replace("\\", "/")
+                        files_to_upload.append((local_path, sub_remote))
+            else:
+                remote_path = f"{remote_dir.rstrip('/')}/{entry.name}"
+                files_to_upload.append((entry.path, remote_path))
+
+        # Step 1: Create all directories
+        total_dirs = len(dirs_to_create)
+        for i, d in enumerate(dirs_to_create):
+            self.call_from_thread(self._status, f"[{i+1}/{total_dirs}] Creating folder: {d}")
+            try:
+                self.client.create_directory(d)
+            except TeraBoxError as e:
+                if "exist" not in str(e).lower():
+                    self.call_from_thread(self._status, f"[red]Mkdir failed: {d}: {e}[/red]")
+
+        # Step 2: Upload all files
+        total_files = len(files_to_upload)
+        errors = []
+        succeeded = 0
+        for i, (local_path, remote_path) in enumerate(files_to_upload):
+            filename = Path(local_path).name
+            self.call_from_thread(self._status, f"[{i+1}/{total_files}] Uploading {filename}...")
+            try:
+                self._upload_single_path(local_path, remote_path)
+                succeeded += 1
+            except Exception as e:
+                errors.append(f"{filename}: {e}")
+                self.call_from_thread(self._status, f"[red][{i+1}/{total_files}] Failed: {filename}[/red]")
+
+        if errors:
+            from .config import CONFIG_DIR
+            log_path = CONFIG_DIR / "tui_errors.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a") as f:
+                from datetime import datetime
+                f.write(f"\n=== Upload {datetime.now().isoformat()} ===\n")
+                f.write(f"Remote dir: {remote_dir}\n")
+                for err in errors:
+                    f.write(f"  FAIL: {err}\n")
+                f.write(f"Succeeded: {succeeded}/{total_files}\n")
+            self.call_from_thread(
+                self._status,
+                f"[yellow]Upload: {succeeded} ok, {len(errors)} failed. See {log_path}[/yellow]",
+            )
+        else:
+            self.call_from_thread(self._status, f"[green]Upload complete: {succeeded}/{total_files} file(s)[/green]")
+        self.call_from_thread(self._refresh_pane, "remote")
+
+    def _upload_single_path(self, local_path: str, remote_path: str) -> None:
+        """Upload one file to exact remote path. Wraps _upload_single."""
+        parent_dir = str(Path(remote_path).parent)
+        self._upload_single(local_path, Path(remote_path).name, parent_dir)
 
     @work(thread=True)
     def _do_batch_upload(self, paths: list[str], names: list[str], remote_dir: str) -> None:

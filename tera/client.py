@@ -278,7 +278,7 @@ class TeraBoxClient:
         }
         resp = self.session.post(
             f"{API_DOMAIN}/api/filemanager",
-            params=self._params({"opera": "delete"}),
+            params=self._params({"opera": "delete", "bdstoken": self.config.auth.bdstoken}),
             data=data,
             timeout=15,
         )
@@ -295,7 +295,7 @@ class TeraBoxClient:
         }
         resp = self.session.post(
             f"{API_DOMAIN}/api/filemanager",
-            params=self._params({"opera": "rename"}),
+            params=self._params({"opera": "rename", "bdstoken": self.config.auth.bdstoken}),
             data=data,
             timeout=15,
         )

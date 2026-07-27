@@ -232,6 +232,134 @@ def config_cmd(ctx, set_download_dir, set_workers):
         console.print(f"  Auth: {'Configured' if config.auth.is_valid else 'Not configured'}")
 
 
+@main.command("view")
+@click.argument("path")
+@click.pass_context
+def view_file(ctx, path):
+    """Stream a file from TeraBox to your video player.
+
+    Gets a direct download link and opens it in an external player.
+    On Android/Termux: tries mpv-android, then system video player.
+    On desktop: uses mpv with auth headers.
+    """
+    import subprocess
+    import shutil
+    import platform
+
+    from .config import HEADERS
+    config = get_config(ctx)
+    client = get_client(ctx)
+    try:
+        console.print(f"[dim]Getting download link...[/dim]")
+        dlink = client.get_download_link(path)
+        if not dlink:
+            console.print("[red]Could not get download link[/red]")
+            raise click.Abort()
+    except TeraBoxError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise click.Abort()
+
+    name = path.rstrip("/").split("/")[-1]
+    ext = os.path.splitext(name)[1].lower()
+    cookie = config.auth.cookie_string()
+    ua = HEADERS["User-Agent"]
+
+    is_android = shutil.which("termux-open") is not None
+
+    if is_android:
+        _view_android(client, dlink, name, ext, cookie)
+    else:
+        _view_desktop(dlink, name, ext, cookie, ua)
+
+
+def _view_android(client, dlink: str, name: str, ext: str, cookie: str) -> None:
+    """Download to temp, then open in mpv-android (avoids slow CDN streaming)."""
+    import subprocess
+    import tempfile
+    import glob as _glob
+    import time as _time
+    import shutil as _shutil
+    import os as _os
+
+    from .downloader import download_files
+
+    tmpdir = _os.environ.get("TMPDIR", "/data/data/com.termux/files/usr/tmp")
+    # Cleanup temp dirs older than 1 hour
+    cutoff = _time.time() - 3600
+    for old in _glob.glob(_os.path.join(tmpdir, "teraview_*")):
+        try:
+            if _os.path.getmtime(old) < cutoff:
+                _shutil.rmtree(old, ignore_errors=True)
+        except Exception:
+            pass
+
+    dest = tempfile.mkdtemp(prefix="teraview_", dir=tmpdir)
+
+    console.print(f"[dim]Downloading {name} to temp...[/dim]")
+    try:
+        results = download_files(client=client, tasks=[(dlink, name, 0)],
+                                 dest_dir=dest, workers=4)
+        if results and results[0].status == "done":
+            local_path = _os.path.join(dest, name)
+            console.print(f"[green]Opening: {name}[/green]")
+            subprocess.Popen(
+                ["am", "start", "--user", "0",
+                 "-a", "android.intent.action.VIEW",
+                 "-d", f"file://{local_path}",
+                 "-n", "is.xyz.mpv/.MPVActivity",
+                 "-t", "video/*"],
+                start_new_session=True,
+            )
+        else:
+            # Fallback: stream directly
+            console.print(f"[yellow]Download skipped, streaming directly[/yellow]")
+            _view_android_stream(dlink, name)
+    except Exception:
+        _view_android_stream(dlink, name)
+
+
+def _view_android_stream(dlink: str, name: str) -> None:
+    """Stream directly in mpv-android (fallback)."""
+    import subprocess
+
+    result = subprocess.run(
+        ["am", "start", "--user", "0",
+         "-a", "android.intent.action.VIEW",
+         "-d", dlink,
+         "-n", "is.xyz.mpv/.MPVActivity"],
+        capture_output=True, timeout=5,
+    )
+    if result.returncode == 0:
+        console.print(f"[green]Streaming in mpv-android: {name}[/green]")
+        return
+    subprocess.Popen(["termux-open", "--view", dlink])
+    console.print(f"[green]Opening: {name}[/green]")
+
+
+def _view_desktop(dlink: str, name: str, ext: str, cookie: str, ua: str) -> None:
+    """Open dlink in mpv on desktop Linux."""
+    import subprocess
+    import shutil
+
+    viewer = shutil.which("mpv")
+    if not viewer:
+        viewer = shutil.which("termux-open")
+        if viewer:
+            subprocess.Popen([viewer, "--view", dlink])
+            console.print(f"[green]Opening: {name}[/green]")
+            return
+        console.print("[red]No player found. Install mpv.[/red]")
+        return
+
+    headers = f"Cookie: {cookie}\nUser-Agent: {ua}"
+    console.print(f"[green]Streaming in mpv: {name}[/green]")
+    subprocess.Popen([
+        viewer, dlink,
+        f"--force-media-title={name}",
+        f"--http-header-fields={headers}",
+    ], start_new_session=True)
+
+
 @main.command("tui")
 @click.pass_context
 def tui_cmd(ctx):

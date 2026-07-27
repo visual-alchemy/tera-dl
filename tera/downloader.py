@@ -16,7 +16,6 @@ from rich.progress import (
     TimeRemainingColumn,
     TextColumn,
 )
-from rich.table import Table
 
 from .client import TeraBoxClient, TeraBoxError
 from .config import Config, HEADERS
@@ -418,20 +417,17 @@ def download_from_share(
         console.print("[yellow]No files found in share link[/yellow]")
         return []
 
-    # Display files
-    table = Table(title="Files found")
-    table.add_column("#", style="dim")
-    table.add_column("Name", style="bold")
-    table.add_column("Size", justify="right")
-
-    for i, f in enumerate(all_files, 1):
+    # Summary instead of full table (saves screen space on small terminals)
+    total_size = sum(int(f.get("size") or 0) for f in all_files)
+    console.print(f"\n[bold]{len(all_files)} file(s)[/bold] — {format_size(total_size)}")
+    for i, f in enumerate(all_files[:10], 1):
         name = f.get("server_filename", "unknown")
         rel_sub = f.get("rel_subfolder", "")
         display_name = os.path.join(rel_sub, name) if rel_sub else name
         size = format_size(int(f.get("size") or 0))
-        table.add_row(str(i), display_name, size)
-
-    console.print(table)
+        console.print(f"  {display_name}  [dim]({size})[/dim]")
+    if len(all_files) > 10:
+        console.print(f"  [dim]... and {len(all_files) - 10} more[/dim]")
     console.print()
 
     # Get download links

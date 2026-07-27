@@ -270,11 +270,11 @@ class TeraBoxClient:
         return result
 
     def delete(self, filelist: list[str]) -> dict:
-        """Delete files/directories."""
+        """Delete files/directories (moves to recycle bin, handles non-empty dirs)."""
         import json
         data = {
             "filelist": json.dumps(filelist),
-            "type": "1",
+            "type": "0",
         }
         resp = self.session.post(
             f"{API_DOMAIN}/api/filemanager",

@@ -386,6 +386,7 @@ class TeraBoxTUI(App):
         Binding("f5", "copy", "Copy"),
         Binding("f7", "mkdir", "Mkdir"),
         Binding("f8", "delete", "Delete"),
+        Binding("v", "view", "View"),
         Binding("insert", "toggle_mark", "Mark"),
         Binding("a", "select_all", "Select All"),
         Binding("r", "refresh", "Refresh"),
@@ -398,6 +399,7 @@ class TeraBoxTUI(App):
         self.config = config
         self._active = "local"
         self._refresh_lock: dict[str, bool] = {}  # debounce per-pane refreshes
+        self._pending_view: Optional[dict] = None  # {dlink, name, cookie, ua, viewer}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -581,6 +583,63 @@ class TeraBoxTUI(App):
             self.call_from_thread(self._refresh_pane, pane_name)
         except Exception as e:
             self.call_from_thread(self._status, f"[red]Mkdir failed: {e}[/red]")
+
+    def action_view(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        pane = self._active_pane()
+        entry = pane.selected_entry()
+        if not entry or entry.name == "..":
+            return
+        self._do_view(pane.backend, entry)
+
+    @work(thread=True)
+    def _do_view(self, backend: PaneBackend, entry: FileEntry) -> None:
+        import shutil
+
+        path = entry.path
+        name = entry.name
+        ext = os.path.splitext(name)[1].lower()
+
+        try:
+            if not backend.is_local:
+                self.call_from_thread(self._status, f"Getting link: {name}")
+                dlink = self.client.get_download_link(path)
+            else:
+                dlink = path
+
+            if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}:
+                viewer = shutil.which("termux-open")
+                if viewer:
+                    self._pending_view = {"dlink": dlink, "name": name,
+                                          "cookie": "", "ua": "",
+                                          "viewer": "termux-open"}
+                    self.call_from_thread(self.exit)
+                    return
+
+            viewer = shutil.which("mpv")
+            if viewer:
+                from .config import HEADERS
+                self._pending_view = {
+                    "dlink": dlink, "name": name,
+                    "cookie": self.config.auth.cookie_string(),
+                    "ua": HEADERS["User-Agent"],
+                    "viewer": "mpv",
+                }
+                self.call_from_thread(self.exit)
+                return
+
+            viewer = shutil.which("termux-open")
+            if viewer:
+                self._pending_view = {"dlink": dlink, "name": name,
+                                      "cookie": "", "ua": "",
+                                      "viewer": "termux-open"}
+                self.call_from_thread(self.exit)
+                return
+
+            self.call_from_thread(self._status, "[red]No player. Install mpv: pkg install mpv[/red]")
+        except Exception as e:
+            self.call_from_thread(self._status, f"[red]View failed: {e}[/red]")
 
     def action_delete(self) -> None:
         if isinstance(self.screen, ModalScreen):
@@ -1003,6 +1062,41 @@ class TeraBoxTUI(App):
 
 
 def run_tui(config: Config) -> None:
+    import subprocess
+    import shutil
+
     client = TeraBoxClient(config)
     app = TeraBoxTUI(client, config)
     app.run()
+
+    pending = app._pending_view
+    if pending:
+        dlink = pending["dlink"]
+        name = pending["name"]
+        if pending["viewer"] == "termux-open":
+            subprocess.Popen(
+                ["termux-open", "--view", dlink],
+                start_new_session=True,
+            )
+        elif pending["viewer"] == "mpv":
+            is_android = shutil.which("termux-open") is not None
+            if is_android:
+                result = subprocess.run(
+                    ["am", "start", "--user", "0",
+                     "-a", "android.intent.action.VIEW",
+                     "-d", dlink,
+                     "-n", "is.xyz.mpv/.MPVActivity"],
+                    capture_output=True, timeout=5,
+                )
+                if result.returncode != 0:
+                    subprocess.Popen(
+                        ["termux-open", "--view", dlink],
+                        start_new_session=True,
+                    )
+            else:
+                headers = f"Cookie: {pending['cookie']}\nUser-Agent: {pending['ua']}"
+                subprocess.Popen([
+                    "mpv", dlink,
+                    f"--force-media-title={name}",
+                    f"--http-header-fields={headers}",
+                ], start_new_session=True)

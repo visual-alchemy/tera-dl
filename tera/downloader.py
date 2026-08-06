@@ -204,6 +204,24 @@ def download_file_parallel(
 
 
 
+def _progress_columns() -> list:
+    """Progress columns adapted to terminal width (narrow phones lose speed/time)."""
+    width = console.width or 80
+    columns = [
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}[/bold blue]"),
+    ]
+    if width >= 60:
+        columns.append(BarColumn())
+    if width >= 90:
+        columns.append(DownloadColumn())
+    if width >= 110:
+        columns.append(TransferSpeedColumn())
+    if width >= 130:
+        columns.append(TimeRemainingColumn())
+    return columns
+
+
 async def download_sequential(
     client: TeraBoxClient,
     tasks: list[DownloadTask],
@@ -214,15 +232,11 @@ async def download_sequential(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}[/bold blue]"),
-        BarColumn(),
-        DownloadColumn(),
-        TransferSpeedColumn(),
-        TimeRemainingColumn(),
+        *_progress_columns(),
         console=console,
     ) as progress:
-        for task in tasks:
+        total_tasks = len(tasks)
+        for idx, task in enumerate(tasks, 1):
             if not task.url:
                 try:
                     task.url = client.get_download_link(task.dest_dir + "/" + task.filename)
@@ -246,8 +260,15 @@ async def download_sequential(
                 except Exception:
                     pass
 
+            # Truncate long filenames so the bar fits narrow terminals
+            desc = os.path.basename(task.filename)
+            counter = f"[{idx}/{total_tasks}] "
+            max_len = max(15, (console.width or 80) // 3)
+            if len(counter) + len(desc) > max_len:
+                desc = desc[: max_len - len(counter) - 3] + "..."
+
             rich_task = progress.add_task(
-                os.path.basename(task.filename),
+                counter + desc,
                 total=task.size or None,
             )
 
@@ -257,7 +278,7 @@ async def download_sequential(
 
                 # Skip check: if file already exists and size matches
                 if dest_path.exists() and task.size and dest_path.stat().st_size == task.size:
-                    progress.update(rich_task, completed=task.size, description=f"[green]Done (Skipped)[/green] {os.path.basename(task.filename)}")
+                    progress.update(rich_task, completed=task.size, description=f"[green]{counter}Done (Skipped)[/green] {desc}")
                     task.status = "done"
                     continue
 

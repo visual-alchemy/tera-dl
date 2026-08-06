@@ -116,8 +116,11 @@ def download(ctx, sources, output, workers, pwd):
     w = workers or config.workers
 
     import time
-    for i, source in enumerate(sources):
-        if i > 0 and TeraBoxClient.parse_share_url(source):
+    total = len(sources)
+    for i, source in enumerate(sources, 1):
+        tag = f"[link {i}/{total}] " if total > 1 else ""
+        console.print(f"\n[bold cyan]{tag}{source}[/bold cyan]")
+        if i > 1 and TeraBoxClient.parse_share_url(source):
             time.sleep(1.0)  # throttle between share links to avoid rate limit
         results = download_single(client, source, dest, workers=w, pwd=pwd)
         if results:
@@ -392,8 +395,11 @@ def download_standalone(ctx, sources, output, workers, pwd):
     w = workers or config.workers
 
     import time
-    for i, source in enumerate(sources):
-        if i > 0 and TeraBoxClient.parse_share_url(source):
+    total = len(sources)
+    for i, source in enumerate(sources, 1):
+        tag = f"[link {i}/{total}] " if total > 1 else ""
+        console.print(f"\n[bold cyan]{tag}{source}[/bold cyan]")
+        if i > 1 and TeraBoxClient.parse_share_url(source):
             time.sleep(1.0)  # throttle between share links to avoid rate limit
         results = download_single(client, source, dest, workers=w, pwd=pwd)
         if results:

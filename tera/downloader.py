@@ -210,14 +210,13 @@ def _progress_columns() -> list:
     columns = [
         SpinnerColumn(),
         TextColumn("[bold blue]{task.description}[/bold blue]"),
+        BarColumn(),
     ]
-    if width >= 60:
-        columns.append(BarColumn())
-    if width >= 90:
+    if width >= 70:
         columns.append(DownloadColumn())
-    if width >= 110:
+    if width >= 90:
         columns.append(TransferSpeedColumn())
-    if width >= 130:
+    if width >= 110:
         columns.append(TimeRemainingColumn())
     return columns
 
@@ -260,12 +259,12 @@ async def download_sequential(
                 except Exception:
                     pass
 
-            # Truncate long filenames so the bar fits narrow terminals
+            # Truncate long filenames so bar fits narrow terminals
             desc = os.path.basename(task.filename)
             counter = f"[{idx}/{total_tasks}] "
-            max_len = max(15, (console.width or 80) // 3)
+            max_len = 20  # hard cap — bar collapses to "..." if desc too long
             if len(counter) + len(desc) > max_len:
-                desc = desc[: max_len - len(counter) - 3] + "..."
+                desc = desc[: max_len - len(counter) - 1] + "\u2026"
 
             rich_task = progress.add_task(
                 counter + desc,

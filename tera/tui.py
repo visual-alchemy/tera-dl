@@ -17,7 +17,6 @@ from textual import work
 from .client import TeraBoxClient, TeraBoxError
 from .config import Config, API_DOMAIN, HEADERS
 from .uploader import upload_file, compute_block_hashes, CHUNK_SIZE
-from .downloader import download_file
 from .formatter import format_size
 
 

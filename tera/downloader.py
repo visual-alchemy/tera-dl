@@ -1,8 +1,5 @@
 import os
-import asyncio
-import aiohttp
 from pathlib import Path
-from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -18,7 +15,6 @@ from rich.progress import (
 )
 
 from .client import TeraBoxClient, TeraBoxError
-from .config import Config, HEADERS
 
 console = Console()
 
@@ -41,42 +37,6 @@ def format_size(size: int) -> str:
     return f"{size:.1f} PB"
 
 
-async def download_file(
-    session: aiohttp.ClientSession,
-    url: str,
-    dest: Path,
-    filename: str,
-    size: int,
-    progress: Progress,
-    task_id,
-) -> bool:
-    """Download a single file with progress tracking."""
-    try:
-        headers = {
-            "User-Agent": HEADERS["User-Agent"],
-            "Cookie": f"ndus=placeholder",  # Will be set by caller
-        }
-
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=300)) as resp:
-            if resp.status != 200:
-                progress.update(task_id, description=f"[red]HTTP {resp.status}[/red] {filename}")
-                return False
-
-            total = int(resp.headers.get("Content-Length", 0)) or size
-            progress.update(task_id, total=total)
-
-            dest_path = dest / filename
-            with open(dest_path, "wb") as f:
-                async for chunk in resp.content.iter_chunked(8192):
-                    f.write(chunk)
-                    progress.update(task_id, advance=len(chunk))
-
-        return True
-    except Exception as e:
-        progress.update(task_id, description=f"[red]Error: {e}[/red] {filename}")
-        return False
-
-
 def download_chunk(
     url: str,
     headers: dict,
@@ -89,12 +49,12 @@ def download_chunk(
     """Download a specific byte range of a file."""
     try:
         headers = headers.copy()
-        
+        chunk_limit = end - start + 1
+
         # Resume check for this chunk
         already_downloaded = 0
         if part_file_path.exists():
             already_downloaded = part_file_path.stat().st_size
-            chunk_limit = end - start + 1
             if already_downloaded > chunk_limit:
                 try:
                     part_file_path.unlink()
@@ -118,6 +78,15 @@ def download_chunk(
                     if chunk:
                         f.write(chunk)
                         progress.update(rich_task_id, advance=len(chunk))
+
+        # A 206 must fill the exact byte range; a short part means a truncated
+        # transfer and would corrupt the merged file, so treat it as failed.
+        if is_partial and part_file_path.stat().st_size != chunk_limit:
+            console.print(
+                f"[red]Incomplete chunk {start}-{end}: "
+                f"{part_file_path.stat().st_size}/{chunk_limit} bytes[/red]"
+            )
+            return False
         return True
     except Exception as e:
         console.print(f"[red]Error downloading chunk {start}-{end}: {e}[/red]")
@@ -172,8 +141,6 @@ def download_file_parallel(
     if already_downloaded_total > 0:
         progress.update(rich_task_id, completed=already_downloaded_total)
 
-    from concurrent.futures import ThreadPoolExecutor
-
     with ThreadPoolExecutor(max_workers=workers) as executor:
         for i in range(workers):
             start = i * chunk_size
@@ -210,7 +177,7 @@ def _progress_columns() -> list:
     columns = [
         SpinnerColumn(),
         TextColumn("[bold blue]{task.description}[/bold blue]"),
-        BarColumn(),
+        BarColumn(bar_width=None),  # None = expand to fill available space
     ]
     if width >= 70:
         columns.append(DownloadColumn())
@@ -221,7 +188,7 @@ def _progress_columns() -> list:
     return columns
 
 
-async def download_sequential(
+def download_sequential(
     client: TeraBoxClient,
     tasks: list[DownloadTask],
     dest_dir: Path,
@@ -233,6 +200,7 @@ async def download_sequential(
     with Progress(
         *_progress_columns(),
         console=console,
+        transient=True,
     ) as progress:
         total_tasks = len(tasks)
         for idx, task in enumerate(tasks, 1):
@@ -329,12 +297,14 @@ async def download_sequential(
                                 progress.update(rich_task, advance=len(chunk))
 
                 task.status = "done"
-                progress.update(rich_task, description=f"[green]Done[/green] {os.path.basename(task.filename)}")
+                rich_total = progress.tasks[rich_task].total or task.size or 1
+                progress.update(rich_task, completed=rich_total,
+                                description=f"[green]Done[/green] {desc}")
 
             except Exception as e:
                 task.status = "failed"
                 task.error = str(e)
-                progress.update(rich_task, description=f"[red]Failed[/red] {os.path.basename(task.filename)}: {e}")
+                progress.update(rich_task, description=f"[red]Failed[/red] {desc}: {e}")
 
     return tasks
 
@@ -361,7 +331,7 @@ def download_files(
 
     console.print(f"\n[bold]Downloading {len(tasks)} file(s) to {dest}[/bold]\n")
 
-    results = asyncio.run(download_sequential(client, tasks, dest, workers))
+    results = download_sequential(client, tasks, dest, workers)
 
     # Summary
     done = sum(1 for t in results if t.status == "done")
@@ -384,40 +354,13 @@ def download_from_share(
     pwd: str = "",
 ) -> list[DownloadTask]:
     """Download all files from a share link recursively."""
-    import time
     console.print(f"\n[bold cyan]Resolving share link...[/bold cyan]")
 
     all_files = []
 
-    def _api_call_with_retry(fn, *args, label="API call", **kwargs):
-        """Call an API function with retry on rate limit (400141) or connection drops."""
-        import requests as req_lib
-        delays = [15, 30, 60, 120, 300]
-        for attempt in range(len(delays) + 1):
-            try:
-                return fn(*args, **kwargs)
-            except TeraBoxError as e:
-                if "rate_limit" in str(e).lower() or "400141" in str(e):
-                    if attempt < len(delays):
-                        wait = delays[attempt]
-                        console.print(f"[yellow]Rate limit — retrying in {wait}s (attempt {attempt+2}/{len(delays)+1})...[/yellow]")
-                        time.sleep(wait)
-                        continue
-                raise
-            except req_lib.exceptions.ConnectionError as e:
-                if attempt < len(delays):
-                    wait = delays[attempt]
-                    console.print(f"[yellow]Connection dropped — retrying in {wait}s (attempt {attempt+2}/{len(delays)+1})...[/yellow]")
-                    time.sleep(wait)
-                    continue
-                raise TeraBoxError(f"Connection failed after {len(delays)+1} attempts: {e}")
-
     def traverse(dir_path: str = "", rel_subfolder: str = ""):
         try:
-            items = _api_call_with_retry(
-                client.get_share_files, share_url, pwd, dir_path,
-                label=f"listing {dir_path or '/'}"
-            )
+            items = client.get_share_files(share_url, pwd, dir_path)
         except TeraBoxError as e:
             console.print(f"[red]Error listing directory {dir_path or '/'}: {e}[/red]")
             return
@@ -464,10 +407,7 @@ def download_from_share(
         dlink = f.get("dlink")
         if not dlink:
             try:
-                dlink = _api_call_with_retry(
-                    client.get_share_dlink, share_url, fs_id, pwd,
-                    label=f"dlink for {name}"
-                )
+                dlink = client.get_share_dlink(share_url, fs_id, pwd)
             except TeraBoxError as e:
                 if "rate_limit" in str(e).lower() or "400141" in str(e):
                     console.print(f"[red]Could not get link for {name}: rate limited[/red]")
@@ -475,6 +415,73 @@ def download_from_share(
                     console.print(f"[red]Could not get link for {name}: {e}[/red]")
                 continue
         tasks.append(DownloadTask(url=dlink, filename=target_name, dest_dir=dest_dir, size=size))
+
+    if not tasks:
+        console.print("[red]No download links obtained[/red]")
+        return []
+
+    return download_files(client, [(t.url, t.filename, t.size) for t in tasks], dest_dir, workers)
+
+
+def _drive_entry(client: TeraBoxClient, path: str) -> dict:
+    """Look up a single drive path by listing its parent directory."""
+    parent = "/" if path in ("", "/") else os.path.dirname(path) or "/"
+    entries = client.list_files(parent, num=1000)
+    for e in entries:
+        if e.get("path") == path:
+            return e
+    return {}
+
+
+def download_from_drive_dir(
+    client: TeraBoxClient,
+    dir_path: str,
+    dest_dir: str,
+    workers: int = 4,
+) -> list[DownloadTask]:
+    """Recursively download every file in a drive folder, preserving structure."""
+    console.print(f"\n[bold cyan]Resolving drive folder...[/bold cyan]")
+
+    all_files = []
+
+    def walk(path: str, rel_subfolder: str = ""):
+        try:
+            items = client.list_files(path, num=1000)
+        except TeraBoxError as e:
+            console.print(f"[red]Error listing directory {path or '/'}: {e}[/red]")
+            return
+
+        for item in items:
+            name = item.get("server_filename", "unknown")
+            if int(item.get("isdir") or 0) == 1:
+                new_rel = os.path.join(rel_subfolder, name) if rel_subfolder else name
+                walk(item.get("path"), new_rel)
+            else:
+                item["rel_subfolder"] = rel_subfolder
+                all_files.append(item)
+
+    walk(dir_path)
+
+    if not all_files:
+        console.print("[yellow]No files found in drive folder[/yellow]")
+        return []
+
+    total_size = sum(int(f.get("size") or 0) for f in all_files)
+    console.print(f"\n[bold]{len(all_files)} file(s)[/bold] — {format_size(total_size)}")
+
+    tasks = []
+    for f in all_files:
+        name = f.get("server_filename", "unknown")
+        rel_sub = f.get("rel_subfolder", "")
+        target_name = os.path.join(rel_sub, name) if rel_sub else name
+        try:
+            dlink = client.get_download_link(f.get("path"))
+        except TeraBoxError as e:
+            console.print(f"[red]Could not get link for {target_name}: {e}[/red]")
+            continue
+        tasks.append(
+            DownloadTask(url=dlink, filename=target_name, dest_dir=dest_dir, size=int(f.get("size") or 0))
+        )
 
     if not tasks:
         console.print("[red]No download links obtained[/red]")
@@ -498,14 +505,13 @@ def download_single(
 
     # Assume it's a drive path
     try:
+        entry = _drive_entry(client, source)
+        if int(entry.get("isdir") or 0) == 1:
+            return download_from_drive_dir(client, source, dest_dir, workers)
+
         url = client.get_download_link(source)
         name = os.path.basename(source)
-        size = 0
-        try:
-            info = client.get_file_info(source)
-            size = int(info.get("size") or 0)
-        except Exception:
-            pass
+        size = int(entry.get("size") or 0)
         return download_files(client, [(url, name, size)], dest_dir, workers)
     except TeraBoxError as e:
         console.print(f"[red]Error: {e}[/red]")

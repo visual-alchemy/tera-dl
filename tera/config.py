@@ -2,7 +2,6 @@ import json
 import os
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
-from typing import Optional
 
 CONFIG_DIR = Path.home() / ".config" / "tera"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -35,6 +34,7 @@ class AuthConfig:
     js_token: str = ""
     bdstoken: str = ""
     panweb: str = "1"
+    tokens_refreshed_at: str = ""
 
     @property
     def is_valid(self) -> bool:
@@ -56,12 +56,22 @@ class Config:
 
     def save(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(CONFIG_DIR, 0o700)
         CONFIG_FILE.write_text(json.dumps(asdict(self), indent=2))
+        os.chmod(CONFIG_FILE, 0o600)
 
     @classmethod
     def load(cls) -> "Config":
         if CONFIG_FILE.exists():
             try:
+                if CONFIG_FILE.stat().st_mode & 0o077:
+                    import sys
+                    print(
+                        f"[security] {CONFIG_FILE} is readable by other users "
+                        "(cookies stored in clear text). Fixing permissions.",
+                        file=sys.stderr,
+                    )
+                    os.chmod(CONFIG_FILE, 0o600)
                 data = json.loads(CONFIG_FILE.read_text())
                 auth = AuthConfig(**data.pop("auth", {}))
                 return cls(auth=auth, **data)

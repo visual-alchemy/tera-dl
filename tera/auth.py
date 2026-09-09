@@ -1,5 +1,7 @@
 import re
 import urllib.parse
+from datetime import datetime
+
 import requests
 from .config import Config, AuthConfig, API_DOMAIN, HEADERS
 
@@ -8,30 +10,20 @@ class AuthError(Exception):
     pass
 
 
-def extract_tokens(ndus: str) -> tuple[str, str, str]:
-    """Fetch main page using ndus and extract jsToken, bdstoken, and BDUSS."""
-    session = requests.Session()
-    session.cookies.set("ndus", ndus)
-    session.cookies.set("PANWEB", "1")
-    session.headers.update(HEADERS)
+def scrape_tokens(session: requests.Session) -> tuple[str, str, str]:
+    """Fetch /main page with the session and scrape jsToken, bdstoken, BDUSS.
 
-    try:
-        resp = session.get(f"{API_DOMAIN}/main", timeout=15, allow_redirects=True)
-        # If we get redirected to login, ndus is invalid/expired
-        if "passport" in resp.url.lower() or "login" in resp.url.lower():
-            raise AuthError(
-                "ndus cookie is invalid or expired. "
-                "Please log in to https://1024terabox.com in your browser and get a fresh ndus cookie."
-            )
-        resp.raise_for_status()
-        html = resp.text
-    except requests.exceptions.TooManyRedirects:
+    Returns (js_token, bdstoken, bduss). Raises AuthError if ndus is invalid.
+    """
+    resp = session.get(f"{API_DOMAIN}/main", timeout=15, allow_redirects=True)
+    # If we get redirected to login, ndus is invalid/expired
+    if "passport" in resp.url.lower() or "login" in resp.url.lower():
         raise AuthError(
-            "Too many redirects — your ndus cookie appears to be invalid or expired. "
-            "Please get a fresh ndus from your browser."
+            "ndus cookie is invalid or expired. "
+            "Please log in to https://1024terabox.com in your browser and get a fresh ndus cookie."
         )
-    except Exception as e:
-        raise AuthError(f"Failed to fetch main page: {e}")
+    resp.raise_for_status()
+    html = resp.text
 
     js_token = ""
     js_token_match = re.search(r'["\']jsToken["\']\s*[:=]\s*["\']([^"\']+)["\']', html)
@@ -69,6 +61,26 @@ def extract_tokens(ndus: str) -> tuple[str, str, str]:
     return js_token, bdstoken, bduss
 
 
+def extract_tokens(ndus: str) -> tuple[str, str, str]:
+    """Fetch main page using ndus and extract jsToken, bdstoken, and BDUSS."""
+    session = requests.Session()
+    session.cookies.set("ndus", ndus)
+    session.cookies.set("PANWEB", "1")
+    session.headers.update(HEADERS)
+
+    try:
+        return scrape_tokens(session)
+    except requests.exceptions.TooManyRedirects:
+        raise AuthError(
+            "Too many redirects — your ndus cookie appears to be invalid or expired. "
+            "Please get a fresh ndus from your browser."
+        )
+    except AuthError:
+        raise
+    except Exception as e:
+        raise AuthError(f"Failed to fetch main page: {e}")
+
+
 def login_interactive(config: Config) -> Config:
     """Interactive login - prompts user for ndus + BDUSS cookies and auto-extracts other tokens."""
     print("╔══════════════════════════════════════════════════╗")
@@ -104,6 +116,7 @@ def login_interactive(config: Config) -> Config:
         raise AuthError(f"Auto-extraction failed: {e}")
 
     config.auth = AuthConfig(ndus=ndus, bduss=bduss, js_token=js_token, bdstoken=bdstoken)
+    config.auth.tokens_refreshed_at = datetime.now().isoformat()
     config.save()
 
     return config

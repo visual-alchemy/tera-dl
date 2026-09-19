@@ -239,12 +239,13 @@ class TestTokenFreshness(unittest.TestCase):
 
 class TestHandleMatching(unittest.TestCase):
     FOLDERS = [
-        "adelinaagraisha", "agatha", "dhiva", "ghea", "livyrenata",
-        "Kinandaputriii", "vindaazizah_", "yoriko", "namasayagwen",
-        "patricia ao", "nikendalusi", "nayla", "danniasalsabila",
-        "safirasalsa", "Nadine Abigail", "melati sesilia", "nyimas yasmin",
-        "Risa", "fathbay", "p", "ayu", "anyaer", "anyager", "viinsatr",
-        "iniyesika", "angiemstwn", "ecasreveirelav",
+        "adelinaagraisha", "agatha_chelsea", "dhivaskz", "gheaindrawari", "livyrenata",
+        "Kinandaputriii", "vindaazizah_", "yorikooangln_", "namasayagwen",
+        "ptrcia_ao", "nikendalusi", "nylaasla", "danniasalsabila",
+        "safirasalbila_", "Nadine Abigail", "melati sesilia", "nyimas yasmin",
+        "risaatjan", "fathbayy", "p", "ayu", "anyaer", "anyageraldine", "viinsatr",
+        "iniyesika", "angiemstwn", "ecasreveirelav", "michelleeeck99",
+        "trslsabila2", "rheanne_felichia",
     ]
 
     def _match(self, filename):
@@ -260,17 +261,18 @@ class TestHandleMatching(unittest.TestCase):
 
     def test_exact_and_prefix(self):
         self.assertEqual(self._match("adelinaagraisha2026_08_24_x.jpg"), "adelinaagraisha")
-        self.assertEqual(self._match("dhivaskz2026_09_04_x.jpg"), "dhiva")
-        self.assertEqual(self._match("gheaindrawari2026_09_14_x.jpg"), "ghea")
-        self.assertEqual(self._match("fathbayy2026_09_11_x.jpg"), "fathbay")
-        self.assertEqual(self._match("risaatjan2026_09_17_x.jpg"), "Risa")
+        self.assertEqual(self._match("dhivaskz2026_09_04_x.jpg"), "dhivaskz")
+        self.assertEqual(self._match("gheaindrawari2026_09_14_x.jpg"), "gheaindrawari")
+        self.assertEqual(self._match("fathbayy2026_09_11_x.jpg"), "fathbayy")
+        self.assertEqual(self._match("risaatjan2026_09_17_x.jpg"), "risaatjan")
 
     def test_overrides(self):
-        self.assertEqual(self._match("ptrcia_ao2026_09_17_x.jpg"), "patricia ao")
-        self.assertEqual(self._match("agatha_df.jpg"), "agatha")
-        self.assertEqual(self._match("nylaasla2026_08_31_x.jpg"), "nayla")
+        self.assertEqual(self._match("agatha_df.jpg"), "agatha_chelsea")
+        self.assertEqual(self._match("patria_ao_df.jpg"), "ptrcia_ao")
+        self.assertEqual(self._match("nayladumq2026_09_03_x.jpg"), "nylaasla")
         self.assertEqual(self._match("nikenandalusi2026_09_06_x.jpg"), "nikendalusi")
         self.assertEqual(self._match("kinan_exclu.mp4"), "Kinandaputriii")
+        self.assertEqual(self._match("livy4youu2026_08_24_x.jpg"), "livyrenata")
 
     def test_short_folder_not_prefix_matched(self):
         self.assertIsNone(self._match("patagonia2026_01_01_x.jpg"))  # 'p' must not match

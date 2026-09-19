@@ -149,20 +149,15 @@ def _normalize(s: str) -> str:
 
 # Manual handle -> folder overrides for names the auto-matcher can't infer.
 OVERRIDES = {
-    "ptrcia_ao": "patricia ao",
-    "patria_ao_df": "patricia ao",
-    "patria_ao_df1": "patricia ao",
-    "agatha_df": "agatha",
+    "agatha_df": "agatha_chelsea",
+    "patria_ao_df": "ptrcia_ao",
+    "patria_ao_df1": "ptrcia_ao",
+    "nayladumq": "nylaasla",
     "niken_df": "nikendalusi",
-    "nylaasla": "nayla",
     "nikenandalusi": "nikendalusi",
     "danniasalsabilla": "danniasalsabila",
-    "safirasalbila_": "safirasalsa",
     "kinan_exclu": "Kinandaputriii",
     "kinan_exclu1": "Kinandaputriii",
-    "rheanne_felichia": "rheane",
-    "michelleeeck99": "Michelle Christo",
-    "trslsabila2": "tslsb",
     "livy4youu": "livyrenata",
 }
 

@@ -237,5 +237,48 @@ class TestTokenFreshness(unittest.TestCase):
         self.assertFalse(client._tokens_fresh())
 
 
+class TestHandleMatching(unittest.TestCase):
+    FOLDERS = [
+        "adelinaagraisha", "agatha", "dhiva", "ghea", "livyrenata",
+        "Kinandaputriii", "vindaazizah_", "yoriko", "namasayagwen",
+        "patricia ao", "nikendalusi", "nayla", "danniasalsabila",
+        "safirasalsa", "Nadine Abigail", "melati sesilia", "nyimas yasmin",
+        "Risa", "fathbay", "p", "ayu", "anyaer", "anyager", "viinsatr",
+        "iniyesika", "angiemstwn", "ecasreveirelav",
+    ]
+
+    def _match(self, filename):
+        return uploader_mod.match_folder(uploader_mod._extract_stem(filename), self.FOLDERS)
+
+    def test_extract_stem_cuts_at_timestamp(self):
+        self.assertEqual(
+            uploader_mod._extract_stem("agatha_chelsea2026_08_20_17_42_04x.jpg"),
+            "agatha_chelsea",
+        )
+        self.assertEqual(uploader_mod._extract_stem("kinan_exclu1.mp4"), "kinan_exclu1")
+        self.assertEqual(uploader_mod._extract_stem("IMG-20260802-WA0021.jpg"), "img-20260802-wa0021")
+
+    def test_exact_and_prefix(self):
+        self.assertEqual(self._match("adelinaagraisha2026_08_24_x.jpg"), "adelinaagraisha")
+        self.assertEqual(self._match("dhivaskz2026_09_04_x.jpg"), "dhiva")
+        self.assertEqual(self._match("gheaindrawari2026_09_14_x.jpg"), "ghea")
+        self.assertEqual(self._match("fathbayy2026_09_11_x.jpg"), "fathbay")
+        self.assertEqual(self._match("risaatjan2026_09_17_x.jpg"), "Risa")
+
+    def test_overrides(self):
+        self.assertEqual(self._match("ptrcia_ao2026_09_17_x.jpg"), "patricia ao")
+        self.assertEqual(self._match("agatha_df.jpg"), "agatha")
+        self.assertEqual(self._match("nylaasla2026_08_31_x.jpg"), "nayla")
+        self.assertEqual(self._match("nikenandalusi2026_09_06_x.jpg"), "nikendalusi")
+        self.assertEqual(self._match("kinan_exclu.mp4"), "Kinandaputriii")
+
+    def test_short_folder_not_prefix_matched(self):
+        self.assertIsNone(self._match("patagonia2026_01_01_x.jpg"))  # 'p' must not match
+
+    def test_unknown_skipped(self):
+        self.assertIsNone(self._match("youknowwhttt2026_09_15_x.jpg"))
+        self.assertIsNone(self._match("clrnvt2026_08_24_x.jpg"))
+
+
 if __name__ == "__main__":
     unittest.main()

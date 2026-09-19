@@ -7,7 +7,7 @@ from .config import Config
 from .auth import login_interactive, verify_auth, AuthError
 from .client import TeraBoxClient, TeraBoxError
 from .downloader import download_single, download_from_share, download_files
-from .uploader import upload_file
+from .uploader import upload_file, sync_local_dir
 from .formatter import (
     console,
     print_file_list,
@@ -138,6 +138,23 @@ def upload(ctx, local_path, remote):
         upload_file(client, local_path, remote)
     except TeraBoxError as e:
         console.print(f"[red]Upload failed: {e}[/red]")
+        raise click.Abort()
+
+
+@main.command("sync")
+@click.argument("local_dir")
+@click.argument("remote_dir")
+@click.option("--apply", is_flag=True, help="Actually upload and move files (default: dry-run preview)")
+@click.option("--uploaded-dir", default=None, help="Move uploaded files here (default: <local_dir>/uploaded)")
+@click.option("--limit", default=None, type=int, help="Upload at most N files this run")
+@click.pass_context
+def sync(ctx, local_dir, remote_dir, apply, uploaded_dir, limit):
+    """Upload local files into matching remote subfolders by name, then move them."""
+    client = get_client(ctx)
+    try:
+        sync_local_dir(client, local_dir, remote_dir, uploaded_dir, apply=apply, limit=limit)
+    except TeraBoxError as e:
+        console.print(f"[red]Sync failed: {e}[/red]")
         raise click.Abort()
 
 

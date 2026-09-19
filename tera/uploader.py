@@ -1,7 +1,9 @@
 import os
+import re
+import time
+import shutil
 import hashlib
 import json
-import requests
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +52,8 @@ def upload_file(
     console.print(f"[bold]Uploading:[/bold] {filepath.name} ({file_size} bytes)")
     console.print(f"[dim]Destination:[/dim] {remote_path}")
 
+    client._ensure_tokens()
+
     # Compute block hashes
     console.print("[dim]Computing file hashes...[/dim]")
     block_list = compute_block_hashes(str(filepath))
@@ -64,17 +68,13 @@ def upload_file(
         "rtype": "1",
     }
 
-    resp = client.session.post(
+    result = client._request_json(
+        "POST",
         f"{API_DOMAIN}/rest/2.0/xpan/file",
         params=client._params({"method": "precreate", "bdstoken": client.config.auth.bdstoken}),
         data=data,
         timeout=30,
     )
-    resp.raise_for_status()
-    result = resp.json()
-
-    if result.get("errno") != 0:
-        raise TeraBoxError(f"Precreate failed: {result.get('errmsg', 'unknown')}")
 
     uploadid = result.get("uploadid", "")
     needed_blocks = result.get("block_list", [])
@@ -110,13 +110,7 @@ def upload_file(
                         "uploadsign": "0",
                     }
 
-                    resp = client.session.post(
-                        pcs_url,
-                        params=params,
-                        files=files,
-                        timeout=120,
-                    )
-                    resp.raise_for_status()
+                    client._request_json("POST", pcs_url, params=params, files=files, timeout=120)
                     progress.update(upload_task, advance=1)
 
     # Step 3: Create (finalize)
@@ -130,17 +124,140 @@ def upload_file(
         "rtype": "1",
     }
 
-    resp = client.session.post(
+    client._request_json(
+        "POST",
         f"{API_DOMAIN}/rest/2.0/xpan/file",
         params=client._params({"method": "create", "bdstoken": client.config.auth.bdstoken}),
         data=create_data,
         timeout=30,
     )
-    resp.raise_for_status()
-    final = resp.json()
-
-    if final.get("errno") != 0:
-        raise TeraBoxError(f"Create failed: {final.get('errmsg', 'unknown')}")
 
     console.print("[green]Upload complete![/green]")
-    return final
+    return {}
+
+
+def _extract_stem(filename: str) -> str:
+    """Handle part of a filename, i.e. everything before the timestamp token."""
+    base = os.path.splitext(filename)[0]
+    m = re.split(r"20\d{2}[_\-]\d{2}[_\-]\d{2}", base, maxsplit=1)
+    return (m[0] if m else base).strip().lower()
+
+
+def _normalize(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+# Manual handle -> folder overrides for names the auto-matcher can't infer.
+OVERRIDES = {
+    "ptrcia_ao": "patricia ao",
+    "patria_ao_df": "patricia ao",
+    "patria_ao_df1": "patricia ao",
+    "agatha_df": "agatha",
+    "niken_df": "nikendalusi",
+    "nylaasla": "nayla",
+    "nikenandalusi": "nikendalusi",
+    "danniasalsabilla": "danniasalsabila",
+    "safirasalbila_": "safirasalsa",
+    "kinan_exclu": "Kinandaputriii",
+    "kinan_exclu1": "Kinandaputriii",
+    "rheanne_felichia": "rheane",
+    "michelleeeck99": "Michelle Christo",
+    "trslsabila2": "tslsb",
+    "livy4youu": "livyrenata",
+}
+
+
+def match_folder(stem: str, folders: list[str]) -> Optional[str]:
+    """Resolve a filename stem to a remote folder name, or None to skip."""
+    if stem in OVERRIDES:
+        return OVERRIDES[stem]
+    n = _normalize(stem)
+    if not n:
+        return None
+
+    by_norm = {}
+    for f in folders:
+        fn = _normalize(f)
+        if fn:
+            by_norm.setdefault(fn, f)
+
+    if n in by_norm:
+        return by_norm[n]
+
+    # Prefix match, but only for folder names >= 4 chars to avoid 'p', 'ayu', etc.
+    hits = [f for fn, f in by_norm.items() if len(fn) >= 4 and n.startswith(fn)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def sync_local_dir(
+    client: TeraBoxClient,
+    local_dir: str,
+    remote_dir: str,
+    uploaded_dir: Optional[str] = None,
+    apply: bool = False,
+    limit: Optional[int] = None,
+) -> dict:
+    """Upload local files into matching remote subfolders by name, then move them.
+
+    Dry-run (default) prints the plan; `apply=True` performs uploads and moves.
+    `limit` caps how many files to upload in this run (for chunked, resumable runs).
+    """
+    local = Path(local_dir)
+    remote_folders = [
+        f for f in client.list_files(remote_dir, num=1000)
+        if int(f.get("isdir") or 0) == 1
+    ]
+    folder_names = [f.get("server_filename", "unknown") for f in remote_folders]
+
+    files = [
+        f for f in os.listdir(local)
+        if os.path.isfile(os.path.join(local, f)) and f != ".nomedia"
+    ]
+
+    matched = []
+    skipped = []
+    for name in sorted(files):
+        folder = match_folder(_extract_stem(name), folder_names)
+        if folder:
+            matched.append((name, folder))
+        else:
+            skipped.append(name)
+
+    console.print(f"\n[bold]Sync plan[/bold] — {len(matched)} to upload, {len(skipped)} to skip")
+    console.print(f"Remote root: [cyan]{remote_dir}[/cyan]")
+    for name, folder in matched:
+        console.print(f"  [green]{name}[/green] -> [cyan]{folder}/[/cyan]")
+    for name in skipped:
+        console.print(f"  [dim]{name}[/dim] -> [red]skip[/red]")
+
+    if not apply:
+        console.print("\n[dim]Dry run — re-run with --apply to upload and move files.[/dim]")
+        return {"matched": matched, "skipped": skipped}
+
+    to_upload = matched[:limit] if limit else matched
+
+    uploaded = Path(uploaded_dir) if uploaded_dir else local / "uploaded"
+    uploaded.mkdir(parents=True, exist_ok=True)
+
+    ok = fail = 0
+    for name, folder in to_upload:
+        local_path = local / name
+        remote_path = f"{remote_dir.rstrip('/')}/{folder}/{name}"
+        for attempt in range(3):
+            try:
+                upload_file(client, str(local_path), remote_path)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    console.print(f"[red]FAIL {name}: {e}[/red]")
+                    fail += 1
+                else:
+                    console.print(f"[yellow]Retry {attempt + 1} {name}: {e}[/yellow]")
+                    time.sleep(5)
+        else:
+            continue
+        shutil.move(str(local_path), str(uploaded / name))
+        ok += 1
+
+    console.print(f"\n[bold]Done[/bold] — {ok} uploaded, {fail} failed, {len(skipped)} skipped.")
+    return {"matched": matched, "skipped": skipped}

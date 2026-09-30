@@ -36,8 +36,8 @@ def print_file_list(files: list[dict], path: str = "/"):
         name = f.get("server_filename", "unknown")
         size = format_size(int(f.get("size") or 0)) if not is_dir else "-"
         modified = format_timestamp(f.get("server_mtime", 0))
-        type_str = "[blue]DIR[/blue]" if is_dir else "FILE"
-        name_str = f"[blue]{name}/[/blue]" if is_dir else name
+        type_str = "[bright_green]DIR[/bright_green]" if is_dir else "FILE"
+        name_str = f"[bright_green]{name}/[/bright_green]" if is_dir else name
 
         table.add_row(type_str, name_str, size, modified)
 

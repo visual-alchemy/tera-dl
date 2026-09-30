@@ -176,7 +176,7 @@ def _progress_columns() -> list:
     width = console.width or 80
     columns = [
         SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}[/bold blue]"),
+        TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
         BarColumn(bar_width=None),  # None = expand to fill available space
     ]
     if width >= 70:
@@ -245,8 +245,9 @@ def download_sequential(
 
                 # Skip check: if file already exists and size matches
                 if dest_path.exists() and task.size and dest_path.stat().st_size == task.size:
-                    progress.update(rich_task, completed=task.size, description=f"[green]{counter}Done (Skipped)[/green] {desc}")
                     task.status = "done"
+                    progress.remove_task(rich_task)
+                    console.print(f"[green]{counter}Done (Skipped)[/green] {desc}")
                     continue
 
                 headers = {
@@ -297,14 +298,16 @@ def download_sequential(
                                 progress.update(rich_task, advance=len(chunk))
 
                 task.status = "done"
-                rich_total = progress.tasks[rich_task].total or task.size or 1
-                progress.update(rich_task, completed=rich_total,
+                progress.update(rich_task, completed=task.size or 1,
                                 description=f"[green]Done[/green] {desc}")
+                progress.remove_task(rich_task)
+                console.print(f"[green]{counter}Done[/green] {desc}")
 
             except Exception as e:
                 task.status = "failed"
                 task.error = str(e)
-                progress.update(rich_task, description=f"[red]Failed[/red] {desc}: {e}")
+                progress.remove_task(rich_task)
+                console.print(f"[red]{counter}Failed[/red] {desc}: {e}")
 
     return tasks
 

@@ -88,7 +88,7 @@ def upload_file(
         pcs_url = "https://data.1024terabox.com/rest/2.0/pcs/superfile2"
 
         with Progress(
-            TextColumn("[bold blue]{task.description}[/bold blue]"),
+            TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
             BarColumn(),
             TimeRemainingColumn(),
             console=console,

@@ -221,7 +221,7 @@ class FilePane(Vertical):
             if entry.name == "..":
                 text = f"{prefix}[dim]../[/dim]"
             else:
-                text = f"{prefix}[bold blue]{entry.name}/[/bold blue]"
+                text = f"{prefix}[bold bright_green]{entry.name}/[/bold bright_green]"
         else:
             text = f"{prefix}{entry.name}  [dim]{format_size(entry.size)}[/dim]"
         return ListItem(Label(text))

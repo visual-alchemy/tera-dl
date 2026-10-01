@@ -197,7 +197,12 @@ def sync_local_dir(
     Dry-run (default) prints the plan; `apply=True` performs uploads and moves.
     `limit` caps how many files to upload in this run (for chunked, resumable runs).
     """
-    local = Path(local_dir)
+    # NOTE: do NOT use Path.resolve() here — on Termux/Python 3.14
+    # Path(".").resolve() raises FileNotFoundError via strict realpath
+    # when CWD goes through the ~/storage symlink. abspath() never raises.
+    local = Path(os.path.abspath(local_dir))
+    if not local.is_dir():
+        raise TeraBoxError(f"Local directory not found: {local_dir} (resolved: {local})")
     remote_folders = [
         f for f in client.list_files(remote_dir, num=1000)
         if int(f.get("isdir") or 0) == 1
@@ -237,6 +242,10 @@ def sync_local_dir(
     ok = fail = 0
     for name, folder in to_upload:
         local_path = local / name
+        if not local_path.is_file():
+            console.print(f"[red]FAIL {name}: not found at {local_path} (may have been moved/deleted after listing)[/red]")
+            fail += 1
+            continue
         remote_path = f"{remote_dir.rstrip('/')}/{folder}/{name}"
         for attempt in range(3):
             try:
@@ -244,14 +253,19 @@ def sync_local_dir(
                 break
             except Exception as e:
                 if attempt == 2:
-                    console.print(f"[red]FAIL {name}: {e}[/red]")
+                    console.print(f"[red]FAIL {name}: {e} [{local_path}][/red]")
                     fail += 1
                 else:
                     console.print(f"[yellow]Retry {attempt + 1} {name}: {e}[/yellow]")
                     time.sleep(5)
         else:
             continue
-        shutil.move(str(local_path), str(uploaded / name))
+        try:
+            shutil.move(str(local_path), str(uploaded / name))
+        except FileNotFoundError as e:
+            console.print(f"[red]FAIL {name}: move failed — source vanished: {local_path} -> {uploaded / name}: {e}[/red]")
+            fail += 1
+            continue
         ok += 1
 
     console.print(f"\n[bold]Done[/bold] — {ok} uploaded, {fail} failed, {len(skipped)} skipped.")

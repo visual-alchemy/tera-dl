@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
@@ -8,10 +9,13 @@ from typing import Optional
 
 import requests
 from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Header, Footer, ListView, ListItem, Static, Label, Input, Button
+from textual.widgets import (
+    Header, Footer, DataTable, ProgressBar, Static, Input, Button
+)
 from textual.binding import Binding
 from textual import work
 
@@ -172,6 +176,12 @@ class RemoteBackend(PaneBackend):
 
 
 class FilePane(Vertical):
+    SORTS = [
+        ("name", False), ("name", True),
+        ("size", False), ("size", True),
+        ("time", False), ("time", True),
+    ]
+
     def __init__(self, title: str, backend: PaneBackend, cwd: str, id: str = None):
         super().__init__(id=id)
         self.title = title
@@ -179,13 +189,17 @@ class FilePane(Vertical):
         self._cwd = cwd
         self.entries: list[FileEntry] = []
         self.marked: set[int] = set()  # indices of marked entries
+        self._sort_idx = 0
 
     @property
     def cwd(self) -> str:
         return self._cwd
 
     def compose(self) -> ComposeResult:
-        yield ListView(id="file-list")
+        yield DataTable(id="file-table", cursor_type="row", zebra_stripes=False)
+
+    def _table(self) -> DataTable:
+        return self.query_one("#file-table", DataTable)
 
     def _refresh_title(self) -> None:
         path = _short_path(self._cwd, self.backend.is_local)
@@ -196,23 +210,54 @@ class FilePane(Vertical):
             bits.append(f"{count} item{'s' if count != 1 else ''}")
         if self.marked:
             bits.append(f"{len(self.marked)} marked")
+        mode, rev = self.SORTS[self._sort_idx]
+        bits.append(f"{mode} {'v' if rev else '^'}")
         self.border_subtitle = " · ".join(bits)
 
     def _name_budget(self) -> int:
         width = self.size.width or max(20, (self.app.size.width or 80) // 2)
-        return max(12, width - 14)
+        return max(10, width - 26)
+
+    def _name_cell(self, entry: FileEntry) -> Text:
+        name = entry.name + ("/" if entry.is_dir and entry.name != ".." else "")
+        name = _fit_name(name, self._name_budget())
+        if entry.name == "..":
+            return Text(name, style="dim")
+        if entry.is_dir:
+            return Text(name, style="bold bright_green")
+        return Text(name)
+
+    def _row_cells(self, entry: FileEntry, idx: int) -> tuple:
+        marker = Text("▌", style="bold yellow") if idx in self.marked else Text(" ")
+        size = "" if entry.is_dir else f"{format_size(entry.size):>9}"
+        when = format_timestamp(entry.mtime)[:10] if entry.mtime else ""
+        return marker, self._name_cell(entry), Text(size), Text(when, style="dim")
+
+    def _rebuild(self, cursor_row: int = 0) -> None:
+        table = self._table()
+        table.clear(columns=True)
+        table.add_columns("", "Name", "Size", "Modified")
+        if not self.entries:
+            table.add_row("", Text("(empty)", style="dim"), "", "")
+            self._refresh_title()
+            return
+        for i, entry in enumerate(self.entries):
+            table.add_row(*self._row_cells(entry, i), key=str(i))
+        if table.row_count:
+            table.move_cursor(row=min(cursor_row, table.row_count - 1))
+        self._refresh_title()
 
     def set_loading(self) -> None:
         self.entries = []
         self.marked.clear()
-        lv = self.query_one("#file-list", ListView)
-        lv.clear()
-        lv.append(ListItem(Label("(loading...)", classes="pane-empty")))
-        lv.index = None
+        table = self._table()
+        table.clear(columns=True)
+        table.add_columns("", "Name", "Size", "Modified")
+        table.add_row("", Text("(loading...)", style="dim"), "", "")
         self._refresh_title()
 
     def on_key(self, event) -> None:
-        # Focus lives in the ListView; catch Tab here before Screen's focus_next.
+        # Focus lives in the DataTable; catch Tab here before Screen's focus_next.
         if event.key == "tab":
             event.stop()
             self.app.action_switch_pane()
@@ -220,7 +265,7 @@ class FilePane(Vertical):
     def set_active(self, active: bool) -> None:
         if active:
             self.add_class("-active")
-            self.query_one("#file-list", ListView).focus()
+            self._table().focus()
         else:
             self.remove_class("-active")
 
@@ -232,42 +277,37 @@ class FilePane(Vertical):
     def populate(self, entries: list[FileEntry]) -> None:
         self.entries = entries
         self.marked.clear()
-        lv = self.query_one("#file-list", ListView)
-        lv.clear()
-        if not entries:
-            lv.append(ListItem(Label("(empty)", classes="pane-empty")))
-            lv.index = None
-        else:
-            for i, e in enumerate(entries):
-                lv.append(self._make_item(e, i))
-            lv.index = 0
-        self._refresh_title()
+        self._sort_entries()
+        self._rebuild(0)
 
-    def _make_item(self, entry: FileEntry, idx: int) -> ListItem:
-        marked = idx in self.marked
-        prefix = "[bold yellow]▌[/bold yellow] " if marked else "  "
-        name = entry.name + ("/" if entry.is_dir and entry.name != ".." else "")
-        name = escape(_fit_name(name, self._name_budget()))
-        if entry.is_dir:
-            body = f"[dim]{name}[/dim]" if entry.name == ".." else f"[bold bright_green]{name}[/bold bright_green]"
-            text = f"{prefix}{body}"
-        else:
-            text = f"{prefix}{name:<{self._name_budget()}} [dim]{format_size(entry.size):>9}[/dim]"
-        item = ListItem(Label(text))
-        if marked:
-            item.add_class("-marked")
-        return item
+    def _sort_entries(self) -> None:
+        parent = [e for e in self.entries if e.name == ".."]
+        rest = [e for e in self.entries if e.name != ".."]
+        mode, rev = self.SORTS[self._sort_idx]
+        getter = {
+            "name": lambda e: e.name.lower(),
+            "size": lambda e: e.size,
+            "time": lambda e: e.mtime,
+        }[mode]
+        rest.sort(key=getter, reverse=rev)
+        rest.sort(key=lambda e: not e.is_dir)  # dirs first, regardless of order
+        self.entries = parent + rest
+
+    def cycle_sort(self) -> None:
+        self._sort_idx = (self._sort_idx + 1) % len(self.SORTS)
+        self.marked.clear()
+        self._sort_entries()
+        self._rebuild(0)
 
     def toggle_mark(self) -> None:
-        lv = self.query_one("#file-list", ListView)
-        idx = lv.index
-        if idx is None or idx < 0 or idx >= len(self.entries):
+        idx = self._table().cursor_row
+        if idx < 0 or idx >= len(self.entries):
             return
         if idx in self.marked:
             self.marked.discard(idx)
         else:
             self.marked.add(idx)
-        self._redraw(idx)
+        self._rebuild(idx)
 
     def toggle_mark_all(self) -> None:
         all_marked = all(i in self.marked for i in range(len(self.entries)) if self.entries[i].name != "..")
@@ -275,27 +315,17 @@ class FilePane(Vertical):
             self.marked.clear()
         else:
             self.marked = {i for i in range(len(self.entries)) if self.entries[i].name != ".."}
-        self._redraw()
-
-    def _redraw(self, cursor_idx: int = 0) -> None:
-        lv = self.query_one("#file-list", ListView)
-        lv.clear()
-        for i, e in enumerate(self.entries):
-            lv.append(self._make_item(e, i))
-        lv.index = min(cursor_idx, len(self.entries) - 1) if self.entries else None
-        self._refresh_title()
+        cursor = self._table().cursor_row
+        self._rebuild(cursor)
 
     def marked_entries(self) -> list[FileEntry]:
         return [self.entries[i] for i in sorted(self.marked) if i < len(self.entries)]
 
     def selected_entry(self) -> Optional[FileEntry]:
-        lv = self.query_one("#file-list", ListView)
-        idx = lv.index
-        if idx is None or idx < 0:
+        idx = self._table().cursor_row
+        if idx < 0 or idx >= len(self.entries):
             return None
-        if idx < len(self.entries):
-            return self.entries[idx]
-        return None
+        return self.entries[idx]
 
 
 class InputDialog(ModalScreen):
@@ -368,7 +398,8 @@ class HelpScreen(ModalScreen):
 [bold]F2[/bold]  rename    [bold]F5[/bold]  copy
 [bold]F7[/bold]  mkdir     [bold]F8[/bold]  delete
 [bold]v[/bold]   view      [bold]r[/bold]   refresh
-[bold]t[/bold]   theme     [bold]?[/bold]   help
+[bold]s[/bold]   sort      [bold]t[/bold]   theme
+[bold][ / ][/bold] pane width  [bold]?[/bold] help
 [bold]q[/bold]   quit
 """
 
@@ -402,6 +433,9 @@ class TeraBoxTUI(App):
         Binding("a", "select_all", "Select All", show=False),
         Binding("r", "refresh", "Refresh", show=False),
         Binding("t", "toggle_theme", "Theme", show=False),
+        Binding("left_square_bracket", "pane_narrower", "Narrow", show=False),
+        Binding("right_square_bracket", "pane_wider", "Wider", show=False),
+        Binding("s", "cycle_sort", "Sort", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -412,6 +446,7 @@ class TeraBoxTUI(App):
         self.config = config
         self._active = "local"
         self._refresh_lock: dict[str, bool] = {}  # debounce per-pane refreshes
+        self._ratio = 0.5
         self._pending_view: Optional[dict] = None  # {dlink, name, cookie, ua, viewer}
 
     def compose(self) -> ComposeResult:
@@ -419,6 +454,9 @@ class TeraBoxTUI(App):
         with Horizontal(id="panes"):
             yield FilePane("Local", LocalBackend(), str(Path.home()), id="local-pane")
             yield FilePane("Remote", RemoteBackend(self.client), "/", id="remote-pane")
+        with Horizontal(id="transfer"):
+            yield Static("", id="transfer-label")
+            yield ProgressBar(id="transfer-bar", total=100)
         with Horizontal(id="status-bar"):
             yield Static("Ready — Tab to switch, Enter to open, F5 to copy", id="status-left")
             yield Static("", id="status-right")
@@ -509,10 +547,7 @@ class TeraBoxTUI(App):
     def on_key(self, event) -> None:
         if isinstance(self.screen, ModalScreen):
             return
-        if event.key in ("enter", "return"):
-            event.stop()
-            self._open_selected()
-        elif event.key == "left":
+        if event.key == "left":
             event.stop()
             self.action_parent()
         elif event.key == "right":
@@ -522,27 +557,32 @@ class TeraBoxTUI(App):
             event.stop()
             self.action_toggle_mark()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    def _pane_for_table(self, table) -> Optional[FilePane]:
         for name in ("local", "remote"):
             pane = self._get_pane(name)
-            if pane.query_one("#file-list") is event.control:
-                self._active = name
-                self._update_active()
-                break
+            if pane.query_one("#file-table") is table:
+                return pane
+        return None
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        pane = self._pane_for_table(event.data_table)
+        if pane is not None:
+            self._active = pane.id.removesuffix("-pane")
+            self._update_active()
         self._open_selected()
 
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        for name in ("local", "remote"):
-            pane = self._get_pane(name)
-            if pane.query_one("#file-list") is event.control:
-                # Ignore the Highlighted event fired by populate(): only follow
-                # the cursor when the user actually focused this pane.
-                if event.control.has_focus and self._active != name:
-                    self._active = name
-                    self._update_active()
-                if name == self._active:
-                    self._update_info(pane)
-                break
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        pane = self._pane_for_table(event.data_table)
+        if pane is None:
+            return
+        name = pane.id.removesuffix("-pane")
+        # Ignore the Highlighted event fired by populate(): only follow the
+        # cursor when the user actually focused this pane.
+        if event.data_table.has_focus and self._active != name:
+            self._active = name
+            self._update_active()
+        if name == self._active:
+            self._update_info(pane)
 
     def _open_selected(self) -> None:
         pane = self._active_pane()
@@ -588,6 +628,49 @@ class TeraBoxTUI(App):
         target = pane.backend.parent(pane.cwd)
         pane.navigate(target)
         self._refresh_pane(self._active)
+
+    def action_pane_narrower(self) -> None:
+        self._set_ratio(self._ratio - 0.1)
+
+    def action_pane_wider(self) -> None:
+        self._set_ratio(self._ratio + 0.1)
+
+    def _set_ratio(self, ratio: float) -> None:
+        self._ratio = min(0.7, max(0.3, round(ratio, 1)))
+        self._get_pane("local").styles.width = f"{int(self._ratio * 100)}%"
+        self._get_pane("remote").styles.width = "1fr"
+        self._status(f"Local pane: {int(self._ratio * 100)}%")
+
+    def action_cycle_sort(self) -> None:
+        pane = self._active_pane()
+        pane.cycle_sort()
+        pane.set_active(True)
+        self._update_info(pane)
+        mode, rev = pane.SORTS[pane._sort_idx]
+        self._status(f"Sort: {mode} {'desc' if rev else 'asc'}")
+
+    # -- Transfer panel --
+
+    def _transfer_show(self, label: str) -> None:
+        self.query_one("#transfer").add_class("-visible")
+        self.query_one("#transfer-label", Static).update(label)
+        self.query_one("#transfer-bar", ProgressBar).update(total=100, progress=0)
+
+    def _transfer_update(self, label: str, pct: Optional[float] = None) -> None:
+        self.query_one("#transfer-label", Static).update(label)
+        if pct is not None:
+            self.query_one("#transfer-bar", ProgressBar).update(progress=max(0, min(100, pct)))
+
+    def _transfer_hide(self) -> None:
+        self.query_one("#transfer").remove_class("-visible")
+
+    def _upload_progress(self, msg: str) -> None:
+        """Runs in the upload worker: hop to the UI thread with clean text."""
+        match = re.search(r"(\d+)%", msg)
+        label = re.sub(r"\[\/?[a-z ]+\]", "", msg)
+        self.call_from_thread(
+            self._transfer_update, label, float(match.group(1)) if match else None
+        )
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
@@ -904,19 +987,23 @@ class TeraBoxTUI(App):
         total = len(items)
         errors = []
         succeeded = 0
-        for i, (remote_path, filename, size) in enumerate(items):
-            self.call_from_thread(
-                self._status, f"[{i+1}/{total}] Downloading {filename}..."
-            )
-            try:
-                self._download_single(remote_path, filename, size, dest_dir)
-                succeeded += 1
-            except Exception as e:
-                err_msg = str(e)
-                errors.append(f"{filename}: {err_msg}")
+        self.call_from_thread(self._transfer_show, f"Downloading {total} file(s)")
+        try:
+            for i, (remote_path, filename, size) in enumerate(items):
                 self.call_from_thread(
-                    self._status, f"[red][{i+1}/{total}] Failed: {filename}[/red]"
+                    self._transfer_update, f"[{i+1}/{total}] {filename}", 0
                 )
+                try:
+                    self._download_single(remote_path, filename, size, dest_dir)
+                    succeeded += 1
+                except Exception as e:
+                    err_msg = str(e)
+                    errors.append(f"{filename}: {err_msg}")
+                    self.call_from_thread(
+                        self._status, f"[red][{i+1}/{total}] Failed: {filename}[/red]"
+                    )
+        finally:
+            self.call_from_thread(self._transfer_hide)
         if errors:
             from .config import CONFIG_DIR, append_log
             log_path = CONFIG_DIR / "tui_errors.log"
@@ -935,12 +1022,11 @@ class TeraBoxTUI(App):
     def _upload_single(self, local_path: str, filename: str, remote_dir: str) -> None:
         """Upload one file via the shared uploader (callback mode: no rich bar)."""
         remote_path = f"{remote_dir.rstrip('/')}/{filename}"
-        upload_file(
-            self.client,
-            local_path,
-            remote_path,
-            on_progress=lambda msg: self.call_from_thread(self._status, msg),
-        )
+        self.call_from_thread(self._transfer_show, f"Uploading {filename}")
+        try:
+            upload_file(self.client, local_path, remote_path, on_progress=self._upload_progress)
+        finally:
+            self.call_from_thread(self._transfer_hide)
 
     def _download_single(self, remote_path: str, filename: str, size: int, dest_dir: str) -> None:
         """Synchronous download of one file. Called from worker thread."""
@@ -964,8 +1050,9 @@ class TeraBoxTUI(App):
                     if total and downloaded % (5 * 1024 * 1024) < 65536:
                         pct = downloaded * 100 // total
                         self.call_from_thread(
-                            self._status,
-                            f"Downloading {filename}... {pct}% ({format_size(downloaded)}/{format_size(total)})",
+                            self._transfer_update,
+                            f"{filename} — {format_size(downloaded)}/{format_size(total)}",
+                            float(pct),
                         )
 
 

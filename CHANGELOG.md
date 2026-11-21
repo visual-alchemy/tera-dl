@@ -6,6 +6,9 @@ All notable changes to tera-dl.
 
 ### Added
 - TUI: `?` help modal listing every keybinding, and `t` to toggle theme
+- TUI: adjustable pane split with `[` / `]` (30–70%)
+- TUI: transfer panel with a progress bar for uploads and downloads
+- TUI: sortable file table — `s` cycles name/size/time, asc/desc, dirs first
 - TUI: pane border titles with `~`-relative path, item count and marked count
 - TUI: `(loading...)` and `(empty)` placeholders, marked rows highlighted,
   middle-truncated filenames that keep their extension
@@ -14,6 +17,8 @@ All notable changes to tera-dl.
 ### Changed
 - TUI styles moved to `tera/tui.tcss`; panes use border titles instead of a
   separate header row, saving a line per pane
+- TUI file list migrated to `DataTable` with Name/Size/Modified columns
+  (right-aligned sizes, date column, row cursor)
 - Pane listing no longer calls `query_one` from the worker thread; the worker
   returns entries and the UI updates on the main thread
 

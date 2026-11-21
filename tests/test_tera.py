@@ -551,6 +551,65 @@ class TestTuiLayout(unittest.TestCase):
         asyncio.run(run())
 
 
+class TestTuiTable(unittest.TestCase):
+    FILES = [
+        {"server_filename": "Photos", "isdir": 1, "size": 0, "path": "/Photos", "server_mtime": 100},
+        {"server_filename": "a_small.txt", "isdir": 0, "size": 10, "path": "/a_small.txt", "server_mtime": 200},
+        {"server_filename": "z_big.bin", "isdir": 0, "size": 900000, "path": "/z_big.bin", "server_mtime": 300},
+    ]
+
+    def test_table_mark_sort_ratio_and_transfer(self):
+        import asyncio
+        try:
+            from tera.tui import TeraBoxTUI
+        except ImportError:
+            self.skipTest("textual not installed")
+
+        files = self.FILES
+
+        class FakeClient:
+            def list_files(self, path, num=1000):
+                return files if path == "/" else []
+
+        async def run():
+            app = TeraBoxTUI(FakeClient(), Config())
+            async with app.run_test(size=(100, 26)) as pilot:
+                await pilot.pause()
+                await pilot.press("tab")
+                await pilot.pause()
+                remote = app._get_pane("remote")
+                table = remote.query_one("#file-table")
+                self.assertEqual(table.row_count, 3)
+                self.assertEqual(remote.selected_entry().name, "Photos")
+
+                await pilot.press("space")
+                await pilot.pause()
+                self.assertEqual(remote.marked, {0})
+                self.assertIn("1 marked", remote.border_subtitle)
+
+                await pilot.press("s")
+                await pilot.pause()
+                names = [e.name for e in remote.entries]
+                self.assertEqual(names[0], "Photos")  # dirs stay first
+                self.assertEqual(remote.marked, set())  # sort clears marks
+
+                before = app._get_pane("local").styles.width
+                await pilot.press("right_square_bracket")
+                await pilot.pause()
+                after = app._get_pane("local").styles.width
+                self.assertNotEqual(before, after)
+                self.assertEqual(app._get_pane("local").styles.width.value, 60)
+
+                app._transfer_show("Uploading x")
+                app._transfer_update("Uploading x 50%", 50.0)
+                self.assertTrue(app.query_one("#transfer").display)
+                self.assertEqual(app.query_one("#transfer-bar").progress, 50.0)
+                app._transfer_hide()
+                self.assertFalse(app.query_one("#transfer").display)
+
+        asyncio.run(run())
+
+
 class TestTuiWalkRemote(unittest.TestCase):
     def test_walk_flattens_tree(self):
         try:

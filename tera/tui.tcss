@@ -6,6 +6,26 @@ Screen {
     height: 1fr;
 }
 
+#transfer {
+    display: none;
+    height: 1;
+    background: $boost;
+    padding: 0 1;
+}
+
+#transfer.-visible {
+    display: block;
+}
+
+#transfer-label {
+    width: 1fr;
+}
+
+#transfer-bar {
+    width: 24;
+    margin-left: 1;
+}
+
 #status-bar {
     height: 1;
     background: $boost;
@@ -31,18 +51,14 @@ FilePane.-active {
     border: round $accent;
 }
 
-FilePane ListView {
+FilePane DataTable {
     height: 1fr;
 }
 
-FilePane .pane-empty {
-    padding: 1 2;
-    color: $text-muted;
+FilePane DataTable > .datatable--header {
+    background: $boost;
 }
 
-ListView > ListItem.-marked {
-    background: $warning 20%;
-}
 
 HelpScreen {
     align: center middle;

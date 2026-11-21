@@ -6,9 +6,26 @@ All notable changes to tera-dl.
 
 ### Added
 - `a` keybinding — select all files in active pane (toggle)
+- Recursive folder download in TUI — F5 on a remote directory walks the tree
+  and preserves the folder structure locally
+- Matcher fallbacks for `(1)`, trailing digits, and Instagram post-ID suffixes
+  before giving up on a folder match
 - Update README: `pipx` install option, TUI keybinding reference, auth flow docs
 
+### Changed
+- `format_size` now lives only in `formatter`; `downloader` imports it
+- Removed the unused `chunk_size` config field (old configs still load)
+
 ### Fixed
+- `tera view` on Android never used its temp-download path — a bad `tasks=`
+  kwarg raised `TypeError` that was swallowed by the broad `except`, so every
+  view fell back to direct streaming
+- Config load no longer resets to a default, auth-less config when
+  `config.json` contains an unknown key (used to raise `TypeError`)
+- Drive-path downloads strip a trailing `/`, so folders are detected and
+  downloaded instead of hitting `get_download_link` and 403ing
+- Stopped writing `bdstoken` and session cookies into
+  `tui_upload_debug.log`
 - `git safe.directory` issue in Termux environment
 
 ---

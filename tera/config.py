@@ -52,7 +52,6 @@ class Config:
     auth: AuthConfig = field(default_factory=AuthConfig)
     download_dir: str = str(Path.home() / "Downloads" / "tera")
     workers: int = 4
-    chunk_size: int = 8192
 
     def save(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)

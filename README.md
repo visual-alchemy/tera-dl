@@ -76,9 +76,10 @@ tera tui
 | `←` / `Backspace` | Go to parent directory |
 | `Space` / `Insert` | Mark file for batch operation |
 | `F2` | Rename |
-| `F5` | Copy (upload/download marked or selected files) |
+| `F5` | Copy (upload/download marked or selected files, folders recursive) |
 | `F7` | Create directory |
 | `F8` | Delete (marked or selected) |
+| `v` | View file (download to temp, open in player) |
 | `r` | Refresh pane |
 | `q` | Quit |
 
@@ -159,6 +160,21 @@ Uploads a local file to your TeraBox drive.
 tera ul ./backup.zip -r /Documents/backup.zip
 ```
 
+#### `tera sync LOCAL_DIR REMOTE_DIR`
+Uploads files from a local directory into matching remote subfolders by name,
+then moves the uploaded files into `LOCAL_DIR/uploaded`. Dry-run by default.
+* **Options:**
+  - `--apply`: Actually upload and move (default: preview only).
+  - `--uploaded-dir PATH`: Move uploaded files here (default: `<LOCAL_DIR>/uploaded`).
+  - `--limit INTEGER`: Upload at most N files this run.
+```bash
+# Preview the plan
+tera sync ~/storage/shared/DCIM/Camera /Photos
+
+# Upload at most 20 files this run
+tera sync ~/storage/shared/DCIM/Camera /Photos --apply --limit 20
+```
+
 ---
 
 ### ℹ️ Utility & Configs
@@ -167,6 +183,13 @@ tera ul ./backup.zip -r /Documents/backup.zip
 Displays current storage details (used vs. total space).
 ```bash
 tera info
+```
+
+#### `tera view [PATH]`
+Plays a drive file without a full manual download. On Android it downloads to a
+temp folder and opens it in mpv-android; on desktop it streams in mpv.
+```bash
+tera view /Videos/movie.mp4
 ```
 
 #### `tera share [PATH]`

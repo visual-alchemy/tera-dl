@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import json
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
@@ -16,8 +15,8 @@ from textual.binding import Binding
 from textual import work
 
 from .client import TeraBoxClient, TeraBoxError
-from .config import Config, API_DOMAIN, HEADERS
-from .uploader import upload_file, compute_block_hashes, CHUNK_SIZE
+from .config import Config, HEADERS
+from .uploader import upload_file
 from .formatter import format_size
 
 
@@ -918,125 +917,14 @@ class TeraBoxTUI(App):
         self._refresh_pane_from_worker("local")
 
     def _upload_single(self, local_path: str, filename: str, remote_dir: str) -> None:
-        """Upload one file — inlined to avoid rich Progress issues in TUI mode."""
-        import hashlib
-        from .config import CONFIG_DIR, append_log
-        log_path = CONFIG_DIR / "tui_upload_debug.log"
-
-        def dlog(msg):
-            append_log(log_path, f"{msg}\n", limit=500)
-
-        dlog(f"--- Upload start: {filename} ---")
-        dlog(f"local_path: {local_path}")
-        dlog(f"remote_dir: {remote_dir}")
-
-        filepath = Path(local_path)
-        file_size = filepath.stat().st_size
+        """Upload one file via the shared uploader (callback mode: no rich bar)."""
         remote_path = f"{remote_dir.rstrip('/')}/{filename}"
-        dlog(f"remote_path: {remote_path}")
-        dlog(f"file_size: {file_size}")
-
-        # Compute block hashes
-        block_list = []
-        with open(filepath, "rb") as f:
-            while True:
-                chunk = f.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                block_list.append(hashlib.md5(chunk).hexdigest())
-        dlog(f"block_list: {len(block_list)} blocks")
-
-        # Precreate
-        data = {
-            "path": remote_path,
-            "size": str(file_size),
-            "autoinit": "1",
-            "block_list": json.dumps(block_list),
-            "rtype": "1",
-        }
-        params = self.client._params({"method": "precreate", "bdstoken": self.client.config.auth.bdstoken})
-        dlog(f"precreate params: {params}")
-        dlog(f"precreate data keys: {list(data.keys())}")
-        resp = self.client.session.post(
-            f"{API_DOMAIN}/rest/2.0/xpan/file",
-            params=params,
-            data=data,
-            timeout=30,
+        upload_file(
+            self.client,
+            local_path,
+            remote_path,
+            on_progress=lambda msg: self.call_from_thread(self._status, msg),
         )
-        dlog(f"precreate status: {resp.status_code}")
-        dlog(f"precreate response: {resp.text[:500]}")
-        resp.raise_for_status()
-        result = resp.json()
-        dlog(f"precreate errno: {result.get('errno')}")
-
-        if result.get("errno") != 0:
-            dlog(f"ERROR: Precreate failed")
-            raise TeraBoxError(f"Precreate errno={result.get('errno')}: {result.get('errmsg', 'unknown')}")
-
-        uploadid = result.get("uploadid", "")
-        needed_blocks = result.get("block_list", [])
-        dlog(f"uploadid: {uploadid[:40]}")
-        dlog(f"needed_blocks: {needed_blocks}")
-
-        if not needed_blocks:
-            dlog("Rapid upload — still need to call create to finalize at new path")
-        else:
-            # Upload blocks
-            pcs_url = "https://data.1024terabox.com/rest/2.0/pcs/superfile2"
-            total_blocks = len(needed_blocks)
-
-            with open(filepath, "rb") as f:
-                for i, block_idx in enumerate(needed_blocks):
-                    f.seek(int(block_idx) * CHUNK_SIZE)
-                    chunk = f.read(CHUNK_SIZE)
-
-                    files = {"file": ("blob", chunk, "application/octet-stream")}
-                    params = {
-                        "method": "upload",
-                        "app_id": "250528",
-                        "uploadid": uploadid,
-                        "path": remote_path,
-                        "partseq": str(block_idx),
-                        "uploadsign": "0",
-                    }
-                    dlog(f"block {i+1}/{total_blocks}: partseq={block_idx}")
-                    resp = self.client.session.post(pcs_url, params=params, files=files, timeout=120)
-                    dlog(f"block {i+1} status: {resp.status_code}")
-                    dlog(f"block {i+1} response: {resp.text[:300]}")
-                    resp.raise_for_status()
-
-                    pct = (i + 1) * 100 // total_blocks
-                    self.call_from_thread(
-                        self._status,
-                        f"Uploading {filename}... {pct}% ({i+1}/{total_blocks} blocks)",
-                    )
-
-        # Create (finalize)
-        create_data = {
-            "path": remote_path,
-            "size": str(file_size),
-            "uploadid": uploadid,
-            "block_list": json.dumps(block_list),
-            "isdir": "0",
-            "rtype": "1",
-        }
-        dlog(f"create data: {create_data}")
-        resp = self.client.session.post(
-            f"{API_DOMAIN}/rest/2.0/xpan/file",
-            params=self.client._params({"method": "create", "bdstoken": self.client.config.auth.bdstoken}),
-            data=create_data,
-            timeout=30,
-        )
-        dlog(f"create status: {resp.status_code}")
-        dlog(f"create response: {resp.text[:500]}")
-        resp.raise_for_status()
-        final = resp.json()
-
-        if final.get("errno") != 0:
-            dlog(f"ERROR: Create failed errno={final.get('errno')}")
-            raise TeraBoxError(f"Create errno={final.get('errno')}: {final.get('errmsg', 'unknown')}")
-
-        dlog(f"Upload SUCCESS: {filename}")
 
     def _download_single(self, remote_path: str, filename: str, size: int, dest_dir: str) -> None:
         """Synchronous download of one file. Called from worker thread."""

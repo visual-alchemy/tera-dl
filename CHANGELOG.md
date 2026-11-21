@@ -15,6 +15,9 @@ All notable changes to tera-dl.
 ### Changed
 - `format_size` now lives only in `formatter`; `downloader` imports it
 - Removed the unused `chunk_size` config field (old configs still load)
+- TUI uploads now use `uploader.upload_file` through an `on_progress` callback
+  instead of a second copy of the upload protocol, so they get the same
+  rate-limit backoff, connection retries, and errno checks as `tera ul`/`sync`
 
 ### Fixed
 - `tera view` on Android never used its temp-download path — a bad `tasks=`

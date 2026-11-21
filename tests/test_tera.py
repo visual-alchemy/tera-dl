@@ -164,6 +164,66 @@ class TestBlockHashes(unittest.TestCase):
         self.assertEqual(uploader_mod.md5_of_bytes(data), hashlib.md5(data).hexdigest())
 
 
+class _FakeUploadClient:
+    def __init__(self, precreate):
+        self._precreate = precreate
+        self.calls = []
+
+        class _Auth:
+            bdstoken = "b"
+
+        class _Config:
+            auth = _Auth()
+
+        self.config = _Config()
+
+    def _ensure_tokens(self):
+        pass
+
+    def _params(self, extra=None):
+        return dict(extra or {})
+
+    def _request_json(self, method, url, **kwargs):
+        tag = (kwargs.get("params") or {}).get("method") or "upload"
+        self.calls.append(tag)
+        if tag == "precreate":
+            return self._precreate
+        return {"errno": 0}
+
+
+class TestUploadFile(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.file = self.tmp / "x.txt"
+        self.file.write_bytes(b"hello world")
+
+    def test_rapid_upload_still_calls_create(self):
+        client = _FakeUploadClient({"uploadid": "", "block_list": []})
+        msgs = []
+        uploader_mod.upload_file(client, str(self.file), "/d/x.txt", on_progress=msgs.append)
+        self.assertEqual(client.calls, ["precreate", "create"])
+        self.assertTrue(any("Rapid upload" in m for m in msgs))
+        self.assertIn("Upload complete", msgs[-1])
+
+    def test_chunk_upload_reports_progress(self):
+        client = _FakeUploadClient({"uploadid": "u1", "block_list": [0]})
+        msgs = []
+        uploader_mod.upload_file(client, str(self.file), "/d/x.txt", on_progress=msgs.append)
+        self.assertEqual(client.calls, ["precreate", "upload", "create"])
+        self.assertIn("100% (1/1 blocks)", " ".join(msgs))
+
+    def test_default_path_uses_rich_without_callback(self):
+        import io
+        from contextlib import redirect_stdout
+        client = _FakeUploadClient({"uploadid": "", "block_list": []})
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            uploader_mod.upload_file(client, str(self.file), "/d/x.txt")
+        self.assertEqual(client.calls, ["precreate", "create"])
+        self.assertIn("Upload complete", buf.getvalue())
+
+
 class TestConfigPermissions(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

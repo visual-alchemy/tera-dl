@@ -39,8 +39,19 @@ def upload_file(
     local_path: str,
     remote_path: Optional[str] = None,
     overwrite: bool = False,
+    on_progress=None,
 ) -> dict:
-    """Upload a file to TeraBox with chunked upload and rapid upload support."""
+    """Upload a file with chunked upload and rapid upload support.
+
+    on_progress: optional callable(str) receiving status messages. When given,
+    no rich progress bar is created (safe inside the TUI).
+    """
+    def notify(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+        else:
+            console.print(msg)
+
     filepath = Path(local_path).resolve()
     if not filepath.exists():
         raise TeraBoxError(f"File not found: {local_path}")
@@ -49,17 +60,17 @@ def upload_file(
         remote_path = f"/{filepath.name}"
 
     file_size = filepath.stat().st_size
-    console.print(f"[bold]Uploading:[/bold] {filepath.name} ({file_size} bytes)")
-    console.print(f"[dim]Destination:[/dim] {remote_path}")
+    notify(f"[bold]Uploading:[/bold] {filepath.name} ({file_size} bytes)")
+    notify(f"[dim]Destination:[/dim] {remote_path}")
 
     client._ensure_tokens()
 
     # Compute block hashes
-    console.print("[dim]Computing file hashes...[/dim]")
+    notify("[dim]Computing file hashes...[/dim]")
     block_list = compute_block_hashes(str(filepath))
 
     # Step 1: Pre-create (rapid upload check)
-    console.print("[dim]Checking for rapid upload...[/dim]")
+    notify("[dim]Checking for rapid upload...[/dim]")
     data = {
         "path": remote_path,
         "size": str(file_size),
@@ -80,24 +91,29 @@ def upload_file(
     needed_blocks = result.get("block_list", [])
 
     if not needed_blocks:
-        console.print("[dim]Rapid upload — file content already in cloud, finalizing at new path...[/dim]")
+        notify("[dim]Rapid upload — file content already in cloud, finalizing at new path...[/dim]")
     else:
-        console.print(f"[dim]Need to upload {len(needed_blocks)} block(s)[/dim]")
+        notify(f"[dim]Need to upload {len(needed_blocks)} block(s)[/dim]")
 
         # Step 2: Upload chunks
         pcs_url = "https://data.1024terabox.com/rest/2.0/pcs/superfile2"
+        total_blocks = len(needed_blocks)
 
-        with Progress(
-            TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
-            BarColumn(),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            upload_task = progress.add_task("Uploading...", total=len(needed_blocks))
+        progress = None
+        if on_progress is None:
+            progress = Progress(
+                TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
+                BarColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            )
+            progress.start()
+            upload_task = progress.add_task("Uploading...", total=total_blocks)
 
+        try:
             with open(filepath, "rb") as f:
-                for block_idx in needed_blocks:
-                    f.seek(block_idx * CHUNK_SIZE)
+                for i, block_idx in enumerate(needed_blocks, 1):
+                    f.seek(int(block_idx) * CHUNK_SIZE)
                     chunk = f.read(CHUNK_SIZE)
 
                     files = {"file": ("blob", chunk, "application/octet-stream")}
@@ -111,10 +127,17 @@ def upload_file(
                     }
 
                     client._request_json("POST", pcs_url, params=params, files=files, timeout=120)
-                    progress.update(upload_task, advance=1)
+                    if progress:
+                        progress.update(upload_task, advance=1)
+                    else:
+                        pct = i * 100 // total_blocks
+                        notify(f"Uploading {filepath.name}... {pct}% ({i}/{total_blocks} blocks)")
+        finally:
+            if progress:
+                progress.stop()
 
     # Step 3: Create (finalize)
-    console.print("[dim]Finalizing upload...[/dim]")
+    notify("[dim]Finalizing upload...[/dim]")
     create_data = {
         "path": remote_path,
         "size": str(file_size),
@@ -132,7 +155,7 @@ def upload_file(
         timeout=30,
     )
 
-    console.print("[green]Upload complete![/green]")
+    notify("[green]Upload complete![/green]")
     return {}
 
 

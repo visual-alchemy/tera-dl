@@ -4,6 +4,8 @@ All notable changes to tera-dl.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-22
+
 ### Added
 - `a` keybinding — select all files in active pane (toggle)
 - Recursive folder download in TUI — F5 on a remote directory walks the tree
@@ -19,6 +21,9 @@ All notable changes to tera-dl.
 - Progress columns (speed/bytes/ETA by terminal width) are shared by
   uploads and downloads; download filenames now use the available width
   instead of a fixed 20-character cap
+- TUI pane header shows the item count; secondary keybindings (`v`, `r`,
+  `a`, `Insert`, `F7`) are hidden from the footer so it fits narrow screens
+- Download output no longer repeats a success line per file plus a summary
 - Removed the unused `chunk_size` config field (old configs still load)
 - TUI uploads now use `uploader.upload_file` through an `on_progress` callback
   instead of a second copy of the upload protocol, so they get the same
@@ -35,6 +40,8 @@ All notable changes to tera-dl.
 - Stopped writing `bdstoken` and session cookies into
   `tui_upload_debug.log`
 - `git safe.directory` issue in Termux environment
+- Read timeouts and dropped chunked responses are retried with backoff like
+  connection errors (previously one slow read aborted `tera ul`)
 - Errors no longer echo `jsToken`/`bdstoken` (redacted in request errors)
 - `api_errors.log` logs only errno/errmsg, not full responses, and all debug
   logs are capped instead of growing forever

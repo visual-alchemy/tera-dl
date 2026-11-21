@@ -122,13 +122,17 @@ class TeraBoxClient:
                     return {"_redirect": resp.headers.get("Location", "")}
                 resp.raise_for_status()
                 data = resp.json()
-            except requests.exceptions.ConnectionError as e:
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as e:
                 if conn_attempts < connection_retries:
                     conn_attempts += 1
                     time.sleep(min(2 ** (conn_attempts - 1), 30))
                     continue
                 raise TeraBoxError(
-                    f"Connection failed after {connection_retries + 1} attempts: {self._redact(str(e))}"
+                    f"Request failed after {connection_retries + 1} attempts: {self._redact(str(e))}"
                 )
             except requests.exceptions.RequestException as e:
                 raise TeraBoxError(f"HTTP request failed: {self._redact(str(e))}")

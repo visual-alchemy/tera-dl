@@ -89,17 +89,12 @@ def print_user_info(info: dict):
 
 
 def print_download_summary(results: list):
-    """Print download results summary."""
-    done = sum(1 for r in results if r.status == "done")
-    failed = sum(1 for r in results if r.status == "failed")
-
+    """Print failed downloads only — the success summary comes from download_files."""
+    failed = [r for r in results if r.status == "failed"]
     if failed:
-        console.print(f"\n[yellow]Downloads: {done} completed, {failed} failed[/yellow]")
-        for r in results:
-            if r.status == "failed":
-                console.print(f"  [red]x[/red] {r.filename}: {r.error}")
-    else:
-        console.print(f"\n[green]All {done} download(s) completed successfully![/green]")
+        console.print(f"\n[yellow]{len(failed)} download(s) failed:[/yellow]")
+        for r in failed:
+            console.print(f"  [red]x[/red] {r.filename}: {r.error}")
 
 
 def print_share_info(share_data: dict):

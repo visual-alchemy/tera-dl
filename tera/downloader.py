@@ -276,7 +276,6 @@ def download_sequential(
                 progress.update(rich_task, completed=task.size or 1,
                                 description=f"[green]Done[/green] {desc}")
                 progress.remove_task(rich_task)
-                console.print(f"[green]{counter}Done[/green] {desc}")
 
             except Exception as e:
                 task.status = "failed"

@@ -362,6 +362,62 @@ class TestLogRedaction(unittest.TestCase):
         config_mod.append_log(Path("/proc/nope/denied/x.log"), "x\n")
 
 
+class TestDownloadSummary(unittest.TestCase):
+    class _Task:
+        def __init__(self, status):
+            self.status = status
+            self.filename = "x.bin"
+            self.error = "boom"
+
+    def _output(self, results):
+        import io
+        from contextlib import redirect_stdout
+        from tera.formatter import print_download_summary
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            print_download_summary(results)
+        return buf.getvalue()
+
+    def test_success_is_silent(self):
+        self.assertEqual(self._output([self._Task("done")]).strip(), "")
+
+    def test_failure_lists_file(self):
+        out = self._output([self._Task("failed")])
+        self.assertIn("x.bin", out)
+        self.assertIn("boom", out)
+
+
+class TestRequestRetry(unittest.TestCase):
+    def test_read_timeout_is_retried(self):
+        import requests
+
+        class Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"errno": 0, "ok": 1}
+
+        class FlakySession:
+            def __init__(self):
+                self.calls = 0
+
+            def request(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls < 3:
+                    raise requests.exceptions.ReadTimeout("boom")
+                return Resp()
+
+        client = TeraBoxClient(Config())
+        client.session = FlakySession()
+        with mock.patch("tera.client.time.sleep"):
+            data = client._request_json("GET", "https://example.test/x")
+        self.assertEqual(data, {"errno": 0, "ok": 1})
+        self.assertEqual(client.session.calls, 3)
+
+
 class TestTokenFreshness(unittest.TestCase):
     def test_freshness_window(self):
         cfg = Config()

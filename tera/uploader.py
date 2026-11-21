@@ -39,7 +39,6 @@ def upload_file(
     client: TeraBoxClient,
     local_path: str,
     remote_path: Optional[str] = None,
-    overwrite: bool = False,
     on_progress=None,
 ) -> dict:
     """Upload a file with chunked upload and rapid upload support.

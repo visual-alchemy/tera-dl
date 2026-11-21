@@ -182,8 +182,13 @@ class FilePane(Vertical):
         yield ListView(id="file-list")
 
     def _header_text(self) -> str:
-        mark = f" ({len(self.marked)} marked)" if self.marked else ""
-        return f"{self.title}: {self._cwd}{mark}"
+        count = sum(1 for e in self.entries if e.name != "..")
+        parts = [f"{self.title}: {self._cwd}"]
+        if count:
+            parts.append(f"({count} item{'s' if count != 1 else ''})")
+        if self.marked:
+            parts.append(f"{len(self.marked)} marked")
+        return " ".join(parts)
 
     def set_active(self, active: bool) -> None:
         if active:
@@ -383,12 +388,12 @@ class TeraBoxTUI(App):
         Binding("backspace", "parent", "Up"),
         Binding("f2", "rename", "Rename"),
         Binding("f5", "copy", "Copy"),
-        Binding("f7", "mkdir", "Mkdir"),
+        Binding("f7", "mkdir", "Mkdir", show=False),
         Binding("f8", "delete", "Delete"),
-        Binding("v", "view", "View"),
-        Binding("insert", "toggle_mark", "Mark"),
-        Binding("a", "select_all", "Select All"),
-        Binding("r", "refresh", "Refresh"),
+        Binding("v", "view", "View", show=False),
+        Binding("insert", "toggle_mark", "Mark", show=False),
+        Binding("a", "select_all", "Select All", show=False),
+        Binding("r", "refresh", "Refresh", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -819,39 +824,6 @@ class TeraBoxTUI(App):
         """Upload one file to exact remote path. Wraps _upload_single."""
         parent_dir = str(Path(remote_path).parent)
         self._upload_single(local_path, Path(remote_path).name, parent_dir)
-
-    @work(thread=True)
-    def _do_batch_upload(self, paths: list[str], names: list[str], remote_dir: str) -> None:
-        total = len(paths)
-        errors = []
-        succeeded = 0
-        for i, (local_path, filename) in enumerate(zip(paths, names)):
-            self.call_from_thread(
-                self._status, f"[{i+1}/{total}] Uploading {filename}..."
-            )
-            try:
-                self._upload_single(local_path, filename, remote_dir)
-                succeeded += 1
-            except Exception as e:
-                err_msg = str(e)
-                errors.append(f"{filename}: {err_msg}")
-                self.call_from_thread(
-                    self._status, f"[red][{i+1}/{total}] Failed: {filename}[/red]"
-                )
-        if errors:
-            from .config import CONFIG_DIR, append_log
-            log_path = CONFIG_DIR / "tui_errors.log"
-            lines = [f"\n=== Upload {datetime.now().isoformat()} ===", f"Remote dir: {remote_dir}"]
-            lines += [f"  FAIL: {err}" for err in errors]
-            lines.append(f"Succeeded: {succeeded}/{total}")
-            append_log(log_path, "\n".join(lines) + "\n", limit=400)
-            self.call_from_thread(
-                self._status,
-                f"[yellow]Upload: {succeeded} ok, {len(errors)} failed. See {log_path}[/yellow]",
-            )
-        else:
-            self.call_from_thread(self._status, f"[green]Upload complete: {succeeded}/{total} file(s)[/green]")
-        self._refresh_pane_from_worker("remote")
 
     def _walk_remote(self, path: str, rel_prefix: str, items: list) -> None:
         """Recursively collect (remote_path, rel_name, size) for files under path."""

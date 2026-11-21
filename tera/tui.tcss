@@ -6,10 +6,6 @@ Screen {
     height: 1fr;
 }
 
-#panes.-narrow {
-    layout: vertical;
-}
-
 #status-bar {
     height: 1;
     background: $boost;

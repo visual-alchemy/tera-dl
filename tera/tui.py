@@ -199,10 +199,7 @@ class FilePane(Vertical):
         self.border_subtitle = " · ".join(bits)
 
     def _name_budget(self) -> int:
-        width = self.size.width
-        if not width:
-            panes = 1 if getattr(self.app, "_narrow", False) else 2
-            width = max(20, (self.app.size.width or 80) // panes)
+        width = self.size.width or max(20, (self.app.size.width or 80) // 2)
         return max(12, width - 14)
 
     def set_loading(self) -> None:
@@ -415,7 +412,6 @@ class TeraBoxTUI(App):
         self.config = config
         self._active = "local"
         self._refresh_lock: dict[str, bool] = {}  # debounce per-pane refreshes
-        self._narrow = False
         self._pending_view: Optional[dict] = None  # {dlink, name, cookie, ua, viewer}
 
     def compose(self) -> ComposeResult:
@@ -429,20 +425,8 @@ class TeraBoxTUI(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._apply_layout(self.size.width)
         self._refresh_pane("local")
         self._refresh_pane("remote")
-
-    def on_resize(self, event) -> None:
-        self._apply_layout(event.size.width)
-
-    def _apply_layout(self, width: int) -> None:
-        """Single-pane under 90 columns, dual-pane above."""
-        self._narrow = width < 90
-        try:
-            self.query_one("#panes").set_class(self._narrow, "-narrow")
-        except Exception:
-            return
         self._update_active()
 
     # -- Pane management --
@@ -459,9 +443,7 @@ class TeraBoxTUI(App):
 
     def _update_active(self) -> None:
         for name in ("local", "remote"):
-            pane = self._get_pane(name)
-            pane.display = (self._active == name) if self._narrow else True
-            pane.set_active(self._active == name)
+            self._get_pane(name).set_active(self._active == name)
         try:
             self._update_info(self._active_pane())
         except Exception:

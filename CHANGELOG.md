@@ -5,8 +5,6 @@ All notable changes to tera-dl.
 ## [Unreleased]
 
 ### Added
-- TUI: single-pane layout automatically below 90 columns (Tab switches),
-  dual-pane above
 - TUI: `?` help modal listing every keybinding, and `t` to toggle theme
 - TUI: pane border titles with `~`-relative path, item count and marked count
 - TUI: `(loading...)` and `(empty)` placeholders, marked rows highlighted,

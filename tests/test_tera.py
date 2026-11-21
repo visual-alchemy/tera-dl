@@ -501,7 +501,7 @@ class TestTuiLayout(unittest.TestCase):
         self.assertIn("\u2026", out)
         self.assertLessEqual(len(_fit_name("hello.txt", 6)), 6)
 
-    def test_narrow_layout_help_and_theme(self):
+    def test_two_panes_any_width_help_and_theme(self):
         import asyncio
         try:
             from tera.tui import TeraBoxTUI, HelpScreen
@@ -516,14 +516,11 @@ class TestTuiLayout(unittest.TestCase):
             app = TeraBoxTUI(FakeClient(), Config())
             async with app.run_test(size=(60, 20)) as pilot:
                 await pilot.pause()
-                self.assertTrue(app._narrow)
                 self.assertTrue(app._get_pane("local").display)
-                self.assertFalse(app._get_pane("remote").display)
+                self.assertTrue(app._get_pane("remote").display)
                 await pilot.press("tab")
                 await pilot.pause()
                 self.assertEqual(app._active, "remote")
-                self.assertTrue(app._get_pane("remote").display)
-                self.assertFalse(app._get_pane("local").display)
                 await pilot.press("?")
                 self.assertIsInstance(app.screen, HelpScreen)
                 await pilot.press("escape")
@@ -548,7 +545,6 @@ class TestTuiLayout(unittest.TestCase):
             app = TeraBoxTUI(FakeClient(), Config())
             async with app.run_test(size=(120, 24)) as pilot:
                 await pilot.pause()
-                self.assertFalse(app._narrow)
                 self.assertTrue(app._get_pane("local").display)
                 self.assertTrue(app._get_pane("remote").display)
 

@@ -74,13 +74,20 @@ tera tui
 | `Tab` | Switch between panes |
 | `Enter` / `→` | Open folder |
 | `←` / `Backspace` | Go to parent directory |
-| `Space` / `Insert` | Mark file for batch operation |
+| `Space` / `Insert` | Mark / unmark file (sets range anchor) |
+| `Shift` + `↑`/`↓` | Extend mark range from the anchor |
+| `Shift` + Click | Mark range to the clicked row |
+| `a` | Mark all / clear all (toggle) |
+| `s` | Sort: name/size/time, asc/desc |
+| `[` / `]` | Narrow / widen the local pane |
 | `F2` | Rename |
 | `F5` | Copy (upload/download marked or selected files, folders recursive) |
 | `F7` | Create directory |
 | `F8` | Delete (marked or selected) |
 | `v` | View file (download to temp, open in player) |
 | `r` | Refresh pane |
+| `t` | Toggle dark/light theme |
+| `?` | Keybinding help |
 | `q` | Quit |
 
 ---

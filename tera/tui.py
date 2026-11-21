@@ -200,6 +200,23 @@ class RemoteBackend(PaneBackend):
         return "/"
 
 
+class FileTable(DataTable):
+    """DataTable that reports shift+click so the pane can mark a range."""
+
+    shift_handler = None  # callable(row_index) set by FilePane
+
+    async def _on_click(self, event) -> None:
+        meta = event.style.meta
+        row = meta.get("row")
+        if event.shift and self.cursor_type == "row" and row is not None and row >= 0:
+            self.cursor_coordinate = (row, 0)
+            if self.shift_handler:
+                self.shift_handler(row)
+            event.stop()
+            return
+        await super()._on_click(event)
+
+
 class FilePane(Vertical):
     SORTS = [
         ("name", False), ("name", True),
@@ -214,6 +231,7 @@ class FilePane(Vertical):
         self._cwd = cwd
         self.entries: list[FileEntry] = []
         self.marked: set[int] = set()  # indices of marked entries
+        self._anchor: Optional[int] = None
         self._sort_idx = 0
         self._loading = False
 
@@ -222,10 +240,13 @@ class FilePane(Vertical):
         return self._cwd
 
     def compose(self) -> ComposeResult:
-        yield DataTable(id="file-table", cursor_type="row", zebra_stripes=False)
+        yield FileTable(id="file-table", cursor_type="row", zebra_stripes=False)
 
-    def _table(self) -> DataTable:
-        return self.query_one("#file-table", DataTable)
+    def on_mount(self) -> None:
+        self._table().shift_handler = self.mark_range
+
+    def _table(self) -> FileTable:
+        return self.query_one("#file-table", FileTable)
 
     def _refresh_title(self) -> None:
         path = _short_path(self._cwd, self.backend.is_local)
@@ -313,12 +334,14 @@ class FilePane(Vertical):
     def navigate(self, path: str) -> None:
         self._cwd = path
         self.marked.clear()
+        self._anchor = None
         self._refresh_title()
 
     def populate(self, entries: list[FileEntry]) -> None:
         self._loading = False
         self.entries = entries
         self.marked.clear()
+        self._anchor = None
         self._sort_entries()
         self._rebuild(0)
 
@@ -338,6 +361,7 @@ class FilePane(Vertical):
     def cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self.SORTS)
         self.marked.clear()
+        self._anchor = None
         self._sort_entries()
         self._rebuild(0)
 
@@ -349,7 +373,24 @@ class FilePane(Vertical):
             self.marked.discard(idx)
         else:
             self.marked.add(idx)
+        self._anchor = idx
         self._rebuild(idx)
+
+    def mark_range(self, target: int) -> None:
+        """Mark every row between the anchor and target (shift+click/arrows)."""
+        if not self.entries:
+            return
+        target = max(0, min(target, len(self.entries) - 1))
+        anchor = self._anchor if self._anchor is not None else target
+        lo, hi = sorted((anchor, target))
+        self.marked.update(i for i in range(lo, hi + 1) if self.entries[i].name != "..")
+        self._anchor = anchor
+        self._rebuild(target)
+
+    def extend_mark(self, delta: int) -> None:
+        if not self.entries:
+            return
+        self.mark_range(self._table().cursor_row + delta)
 
     def toggle_mark_all(self) -> None:
         all_marked = all(i in self.marked for i in range(len(self.entries)) if self.entries[i].name != "..")
@@ -357,6 +398,7 @@ class FilePane(Vertical):
             self.marked.clear()
         else:
             self.marked = {i for i in range(len(self.entries)) if self.entries[i].name != ".."}
+        self._anchor = None
         cursor = self._table().cursor_row
         self._rebuild(cursor)
 
@@ -434,8 +476,10 @@ class HelpScreen(ModalScreen):
 [bold]Tab[/bold]          switch pane
 [bold]Enter / →[/bold]    open folder / file
 [bold]← / Backspace[/bold] parent folder
-[bold]Space / Ins[/bold]  mark file
-[bold]a[/bold]            select all (toggle)
+[bold]Space / Ins[/bold]  mark / unmark file
+[bold]Shift+↑/↓[/bold]    mark range from anchor
+[bold]Shift+Click[/bold]  mark range to row
+[bold]a[/bold]            mark all / clear all
 
 [bold]F2[/bold]  rename    [bold]F5[/bold]  copy
 [bold]F7[/bold]  mkdir     [bold]F8[/bold]  delete
@@ -478,6 +522,8 @@ class TeraBoxTUI(App):
         Binding("left_square_bracket", "pane_narrower", "Narrow", show=False),
         Binding("right_square_bracket", "pane_wider", "Wider", show=False),
         Binding("s", "cycle_sort", "Sort", show=False),
+        Binding("shift+up", "extend_mark_up", "Mark up", show=False),
+        Binding("shift+down", "extend_mark_down", "Mark down", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -599,6 +645,7 @@ class TeraBoxTUI(App):
             event.stop()
             self.action_toggle_mark()
 
+
     def _pane_for_table(self, table) -> Optional[FilePane]:
         for name in ("local", "remote"):
             pane = self._get_pane(name)
@@ -682,6 +729,14 @@ class TeraBoxTUI(App):
         self._get_pane("local").styles.width = f"{int(self._ratio * 100)}%"
         self._get_pane("remote").styles.width = "1fr"
         self._status(f"Local pane: {int(self._ratio * 100)}%")
+
+    def action_extend_mark_up(self) -> None:
+        self._active_pane().extend_mark(-1)
+        self._update_info(self._active_pane())
+
+    def action_extend_mark_down(self) -> None:
+        self._active_pane().extend_mark(1)
+        self._update_info(self._active_pane())
 
     def action_cycle_sort(self) -> None:
         pane = self._active_pane()

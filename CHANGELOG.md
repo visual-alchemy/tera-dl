@@ -9,6 +9,8 @@ All notable changes to tera-dl.
 - TUI: adjustable pane split with `[` / `]` (30–70%)
 - TUI: transfer panel with a progress bar for uploads and downloads
 - TUI: sortable file table — `s` cycles name/size/time, asc/desc, dirs first
+- TUI: range marking — `Shift+↑/↓` or `Shift+Click` extends from the anchor,
+  `a` still marks/clears everything
 - TUI: compact table cells — short sizes (`1.2M`), relative age (`3d`, `2h`),
   and the Age column auto-hides when a pane is under 44 cells
 - TUI: long pane paths collapse to the last two segments; loading state moves

@@ -670,6 +670,60 @@ class TestTuiTable(unittest.TestCase):
         asyncio.run(run())
 
 
+    def test_mark_range_with_shift(self):
+            import asyncio
+            try:
+                from tera.tui import TeraBoxTUI
+            except ImportError:
+                self.skipTest("textual not installed")
+
+            class FakeClient:
+                def list_files(self, path, num=1000):
+                    return [
+                        {"server_filename": f"f{i}.txt", "isdir": 0, "size": i + 1,
+                         "path": f"/f{i}.txt", "server_mtime": 1795000000}
+                        for i in range(4)
+                    ]
+
+            async def run():
+                app = TeraBoxTUI(FakeClient(), Config())
+                async with app.run_test(size=(100, 24)) as pilot:
+                    await pilot.pause()
+                    await pilot.press("tab")
+                    await pilot.pause()
+                    pane = app._get_pane("remote")
+                    table = pane.query_one("#file-table")
+
+                    await pilot.press("space")
+                    await pilot.pause()
+                    self.assertEqual(pane.marked, {0})
+
+                    await pilot.press("shift+down")
+                    await pilot.pause()
+                    self.assertEqual(pane.marked, {0, 1})
+                    self.assertEqual(table.cursor_row, 1)
+
+                    await pilot.press("shift+down")
+                    await pilot.pause()
+                    self.assertEqual(pane.marked, {0, 1, 2})
+
+                    # shift+click row 3 (header is row 0 in widget coordinates)
+                    pane.marked.clear()
+                    pane._anchor = 0
+                    await pilot.click(table, offset=(5, 4), shift=True)
+                    await pilot.pause()
+                    self.assertEqual(pane.marked, {0, 1, 2, 3})
+
+                    await pilot.press("a")
+                    await pilot.pause()
+                    self.assertEqual(pane.marked, set())  # all were marked -> toggle off
+                    await pilot.press("a")
+                    await pilot.pause()
+                    self.assertEqual(pane.marked, {0, 1, 2, 3})
+
+            asyncio.run(run())
+
+
 class TestTuiWalkRemote(unittest.TestCase):
     def test_walk_flattens_tree(self):
         try:

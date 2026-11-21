@@ -260,6 +260,30 @@ class TestViewAndroid(unittest.TestCase):
         self.assertEqual(captured["urls_names_sizes"][0][:2], ("https://example.test/dlink", "v.mp4"))
 
 
+class TestLogRedaction(unittest.TestCase):
+    def test_redact_query_tokens(self):
+        url = ("https://1024terabox.com/rest/2.0/pcs/file?app_id=250528&jsToken=ABC123"
+               "&method=download&bdstoken=def456&path=%2Fx")
+        out = TeraBoxClient._redact(url)
+        self.assertNotIn("ABC123", out)
+        self.assertNotIn("def456", out)
+        self.assertIn("app_id=250528", out)
+        self.assertIn("jsToken=***", out)
+        self.assertIn("path=%2Fx", out)
+
+    def test_append_log_trims_to_limit(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log = tmp / "x.log"
+        for i in range(10):
+            config_mod.append_log(log, f"line{i}\n", limit=5)
+        lines = log.read_text().splitlines()
+        self.assertEqual(lines, [f"line{i}" for i in range(5, 10)])
+
+    def test_append_log_never_raises(self):
+        config_mod.append_log(Path("/proc/nope/denied/x.log"), "x\n")
+
+
 class TestTokenFreshness(unittest.TestCase):
     def test_freshness_window(self):
         cfg = Config()

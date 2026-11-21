@@ -27,6 +27,9 @@ All notable changes to tera-dl.
 - Stopped writing `bdstoken` and session cookies into
   `tui_upload_debug.log`
 - `git safe.directory` issue in Termux environment
+- Errors no longer echo `jsToken`/`bdstoken` (redacted in request errors)
+- `api_errors.log` logs only errno/errmsg, not full responses, and all debug
+  logs are capped instead of growing forever
 
 ---
 

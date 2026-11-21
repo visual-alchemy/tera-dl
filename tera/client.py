@@ -72,20 +72,19 @@ class TeraBoxClient:
             msg = f"API error (errno={errno}): {data.get('errmsg', 'unknown')}"
             if context:
                 msg = f"[{context}] {msg}"
-            # Log all non-zero API errors for debugging
-            from .config import CONFIG_DIR
-            try:
-                log = CONFIG_DIR / "api_errors.log"
-                log.parent.mkdir(parents=True, exist_ok=True)
-                from datetime import datetime
-                with open(log, "a") as f:
-                    f.write(f"{datetime.now().isoformat()} {msg}\n")
-                    f.write(f"  full response: {data}\n")
-            except Exception:
-                pass
+            # Log errno/errmsg only — full responses can carry dlinks and tokens.
+            from .config import CONFIG_DIR, append_log
+            append_log(CONFIG_DIR / "api_errors.log", f"{datetime.now().isoformat()} {msg}\n")
             if errno == 400141:
                 raise TeraBoxError(f"rate_limit")
             raise TeraBoxError(msg)
+
+    # jsToken/bdstoken ride in query strings; keep them out of error messages.
+    _SECRET_PARAM_RE = re.compile(r"(jsToken|bdstoken)=[^&\s]+")
+
+    @classmethod
+    def _redact(cls, s: str) -> str:
+        return cls._SECRET_PARAM_RE.sub(r"\1=***", s)
 
     @staticmethod
     def _looks_like_auth_error(errmsg) -> bool:
@@ -128,9 +127,11 @@ class TeraBoxClient:
                     conn_attempts += 1
                     time.sleep(min(2 ** (conn_attempts - 1), 30))
                     continue
-                raise TeraBoxError(f"Connection failed after {connection_retries + 1} attempts: {e}")
+                raise TeraBoxError(
+                    f"Connection failed after {connection_retries + 1} attempts: {self._redact(str(e))}"
+                )
             except requests.exceptions.RequestException as e:
-                raise TeraBoxError(f"HTTP request failed: {e}")
+                raise TeraBoxError(f"HTTP request failed: {self._redact(str(e))}")
 
             errno = data.get("errno", 0)
             if errno == 0:

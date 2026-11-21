@@ -92,3 +92,18 @@ class Config:
             "clienttype": "0",
             "jsToken": self.auth.js_token,
         }
+
+
+def append_log(path: Path, text: str, limit: int = 200) -> None:
+    """Append to a log file, keeping only the newest `limit` lines. Never raises."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as f:
+            f.write(text)
+        lines = path.read_text(errors="replace").splitlines(keepends=True)
+        if len(lines) > limit:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text("".join(lines[-limit:]))
+            tmp.replace(path)
+    except Exception:
+        pass

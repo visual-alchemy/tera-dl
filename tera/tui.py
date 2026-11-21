@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
@@ -801,16 +802,12 @@ class TeraBoxTUI(App):
                 self.call_from_thread(self._status, f"[red][{i+1}/{total_files}] Failed: {filename}[/red]")
 
         if errors:
-            from .config import CONFIG_DIR
+            from .config import CONFIG_DIR, append_log
             log_path = CONFIG_DIR / "tui_errors.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(log_path, "a") as f:
-                from datetime import datetime
-                f.write(f"\n=== Upload {datetime.now().isoformat()} ===\n")
-                f.write(f"Remote dir: {remote_dir}\n")
-                for err in errors:
-                    f.write(f"  FAIL: {err}\n")
-                f.write(f"Succeeded: {succeeded}/{total_files}\n")
+            lines = [f"\n=== Upload {datetime.now().isoformat()} ===", f"Remote dir: {remote_dir}"]
+            lines += [f"  FAIL: {err}" for err in errors]
+            lines.append(f"Succeeded: {succeeded}/{total_files}")
+            append_log(log_path, "\n".join(lines) + "\n", limit=400)
             self.call_from_thread(
                 self._status,
                 f"[yellow]Upload: {succeeded} ok, {len(errors)} failed. See {log_path}[/yellow]",
@@ -843,16 +840,12 @@ class TeraBoxTUI(App):
                     self._status, f"[red][{i+1}/{total}] Failed: {filename}[/red]"
                 )
         if errors:
-            from .config import CONFIG_DIR
+            from .config import CONFIG_DIR, append_log
             log_path = CONFIG_DIR / "tui_errors.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(log_path, "a") as f:
-                from datetime import datetime
-                f.write(f"\n=== Upload {datetime.now().isoformat()} ===\n")
-                f.write(f"Remote dir: {remote_dir}\n")
-                for err in errors:
-                    f.write(f"  FAIL: {err}\n")
-                f.write(f"Succeeded: {succeeded}/{total}\n")
+            lines = [f"\n=== Upload {datetime.now().isoformat()} ===", f"Remote dir: {remote_dir}"]
+            lines += [f"  FAIL: {err}" for err in errors]
+            lines.append(f"Succeeded: {succeeded}/{total}")
+            append_log(log_path, "\n".join(lines) + "\n", limit=400)
             self.call_from_thread(
                 self._status,
                 f"[yellow]Upload: {succeeded} ok, {len(errors)} failed. See {log_path}[/yellow]",
@@ -910,16 +903,12 @@ class TeraBoxTUI(App):
                     self._status, f"[red][{i+1}/{total}] Failed: {filename}[/red]"
                 )
         if errors:
-            from .config import CONFIG_DIR
+            from .config import CONFIG_DIR, append_log
             log_path = CONFIG_DIR / "tui_errors.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(log_path, "a") as f:
-                from datetime import datetime
-                f.write(f"\n=== Download {datetime.now().isoformat()} ===\n")
-                f.write(f"Dest dir: {dest_dir}\n")
-                for err in errors:
-                    f.write(f"  FAIL: {err}\n")
-                f.write(f"Succeeded: {succeeded}/{total}\n")
+            lines = [f"\n=== Download {datetime.now().isoformat()} ===", f"Dest dir: {dest_dir}"]
+            lines += [f"  FAIL: {err}" for err in errors]
+            lines.append(f"Succeeded: {succeeded}/{total}")
+            append_log(log_path, "\n".join(lines) + "\n", limit=400)
             self.call_from_thread(
                 self._status,
                 f"[yellow]Download: {succeeded} ok, {len(errors)} failed. See {log_path}[/yellow]",
@@ -931,14 +920,11 @@ class TeraBoxTUI(App):
     def _upload_single(self, local_path: str, filename: str, remote_dir: str) -> None:
         """Upload one file — inlined to avoid rich Progress issues in TUI mode."""
         import hashlib
-        from .config import CONFIG_DIR
+        from .config import CONFIG_DIR, append_log
         log_path = CONFIG_DIR / "tui_upload_debug.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
 
         def dlog(msg):
-            with open(log_path, "a") as lf:
-                lf.write(f"{msg}\n")
-                lf.flush()
+            append_log(log_path, f"{msg}\n", limit=500)
 
         dlog(f"--- Upload start: {filename} ---")
         dlog(f"local_path: {local_path}")

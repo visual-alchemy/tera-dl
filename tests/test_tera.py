@@ -551,6 +551,66 @@ class TestTuiLayout(unittest.TestCase):
         asyncio.run(run())
 
 
+class TestTuiFormats(unittest.TestCase):
+    def test_short_sizes(self):
+        from tera.formatter import format_size_short
+
+        self.assertEqual(format_size_short(0), "0B")
+        self.assertEqual(format_size_short(10), "10B")
+        self.assertEqual(format_size_short(1024), "1.0K")
+        self.assertEqual(format_size_short(12345), "12K")
+        self.assertEqual(format_size_short(1234567), "1.2M")
+        self.assertEqual(format_size_short(999999999), "954M")
+
+    def test_age_buckets(self):
+        import time
+        from tera.tui import _age
+
+        now = time.time()
+        self.assertEqual(_age(0), "")
+        self.assertEqual(_age(int(now - 10)), "now")
+        self.assertEqual(_age(int(now - 300)), "5m")
+        self.assertEqual(_age(int(now - 3 * 3600)), "3h")
+        self.assertEqual(_age(int(now - 2 * 86400)), "2d")
+        old = int(now - 40 * 86400)
+        self.assertRegex(_age(old), r"^\d{2}-\d{2}$")
+
+    def test_long_path_collapses(self):
+        from tera.tui import _short_path
+
+        self.assertEqual(_short_path("/", False), "/")
+        self.assertEqual(
+            _short_path("/very/long/path/to/some/deep/folder", False),
+            "\u2026/deep/folder",
+        )
+
+    def test_narrow_pane_drops_age_column(self):
+        import asyncio
+        try:
+            from tera.tui import TeraBoxTUI
+        except ImportError:
+            self.skipTest("textual not installed")
+
+        class FakeClient:
+            def list_files(self, path, num=1000):
+                return []
+
+        async def run():
+            app = TeraBoxTUI(FakeClient(), Config())
+            async with app.run_test(size=(64, 20)) as pilot:
+                await pilot.pause()
+                table = app._get_pane("local").query_one("#file-table")
+                self.assertEqual(len(table.columns), 3)
+
+            app = TeraBoxTUI(FakeClient(), Config())
+            async with app.run_test(size=(120, 24)) as pilot:
+                await pilot.pause()
+                table = app._get_pane("local").query_one("#file-table")
+                self.assertEqual(len(table.columns), 4)
+
+        asyncio.run(run())
+
+
 class TestTuiTable(unittest.TestCase):
     FILES = [
         {"server_filename": "Photos", "isdir": 1, "size": 0, "path": "/Photos", "server_mtime": 100},

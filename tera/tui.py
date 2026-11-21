@@ -23,15 +23,40 @@ from . import __version__
 from .client import TeraBoxClient, TeraBoxError
 from .config import Config, HEADERS
 from .uploader import upload_file
-from .formatter import format_size, format_timestamp
+from .formatter import format_size, format_size_short, format_timestamp
 
 
 def _short_path(path: str, is_local: bool) -> str:
-    """Home-relative path for the pane border title."""
+    """Home-relative path for the pane border title, collapsed when long."""
     home = str(Path.home())
     if is_local and (path == home or path.startswith(home + os.sep)):
-        return "~" + path[len(home):]
+        path = "~" + path[len(home):]
+    if len(path) > 30:
+        parts = [p for p in path.strip("/").split("/") if p]
+        if len(parts) > 2:
+            path = "\u2026/" + "/".join(parts[-2:])
     return path
+
+
+def _age(mtime: int) -> str:
+    """Compact age for the date column: now, 5m, 3h, 2d, 11-18, 2025-11-18."""
+    if not mtime:
+        return ""
+    from datetime import datetime as _dt
+
+    then = _dt.fromtimestamp(mtime)
+    delta = (_dt.now() - then).total_seconds()
+    if delta < 60:
+        return "now"
+    if delta < 3600:
+        return f"{int(delta // 60)}m"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h"
+    if delta < 7 * 86400:
+        return f"{int(delta // 86400)}d"
+    if then.year == _dt.now().year:
+        return then.strftime("%m-%d")
+    return then.strftime("%Y-%m-%d")
 
 
 def _fit_name(name: str, budget: int) -> str:
@@ -190,6 +215,7 @@ class FilePane(Vertical):
         self.entries: list[FileEntry] = []
         self.marked: set[int] = set()  # indices of marked entries
         self._sort_idx = 0
+        self._loading = False
 
     @property
     def cwd(self) -> str:
@@ -205,6 +231,9 @@ class FilePane(Vertical):
         path = _short_path(self._cwd, self.backend.is_local)
         self.border_title = f"{self.title} — {path}"
         count = sum(1 for e in self.entries if e.name != "..")
+        if self._loading:
+            self.border_subtitle = "loading..."
+            return
         bits = []
         if count:
             bits.append(f"{count} item{'s' if count != 1 else ''}")
@@ -214,9 +243,13 @@ class FilePane(Vertical):
         bits.append(f"{mode} {'v' if rev else '^'}")
         self.border_subtitle = " · ".join(bits)
 
+    def _show_age(self) -> bool:
+        width = self.size.width or max(20, (self.app.size.width or 80) // 2)
+        return width >= 44
+
     def _name_budget(self) -> int:
         width = self.size.width or max(20, (self.app.size.width or 80) // 2)
-        return max(10, width - 26)
+        return max(8, width - (22 if self._show_age() else 14))
 
     def _name_cell(self, entry: FileEntry) -> Text:
         name = entry.name + ("/" if entry.is_dir and entry.name != ".." else "")
@@ -229,14 +262,22 @@ class FilePane(Vertical):
 
     def _row_cells(self, entry: FileEntry, idx: int) -> tuple:
         marker = Text("▌", style="bold yellow") if idx in self.marked else Text(" ")
-        size = "" if entry.is_dir else f"{format_size(entry.size):>9}"
-        when = format_timestamp(entry.mtime)[:10] if entry.mtime else ""
-        return marker, self._name_cell(entry), Text(size), Text(when, style="dim")
+        size = "" if entry.is_dir else f"{format_size_short(entry.size):>7}"
+        cells = (marker, self._name_cell(entry), Text(size))
+        if self._show_age():
+            cells += (Text(_age(entry.mtime), style="dim"),)
+        return cells
+
+    def _columns(self) -> list:
+        cols = ["", "Name", "Size"]
+        if self._show_age():
+            cols.append("Age")
+        return cols
 
     def _rebuild(self, cursor_row: int = 0) -> None:
         table = self._table()
         table.clear(columns=True)
-        table.add_columns("", "Name", "Size", "Modified")
+        table.add_columns(*self._columns())
         if not self.entries:
             table.add_row("", Text("(empty)", style="dim"), "", "")
             self._refresh_title()
@@ -250,10 +291,10 @@ class FilePane(Vertical):
     def set_loading(self) -> None:
         self.entries = []
         self.marked.clear()
+        self._loading = True
         table = self._table()
         table.clear(columns=True)
-        table.add_columns("", "Name", "Size", "Modified")
-        table.add_row("", Text("(loading...)", style="dim"), "", "")
+        table.add_columns(*self._columns())
         self._refresh_title()
 
     def on_key(self, event) -> None:
@@ -275,6 +316,7 @@ class FilePane(Vertical):
         self._refresh_title()
 
     def populate(self, entries: list[FileEntry]) -> None:
+        self._loading = False
         self.entries = entries
         self.marked.clear()
         self._sort_entries()

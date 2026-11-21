@@ -40,6 +40,18 @@ def format_size(size: int) -> str:
     return f"{size:.1f} PB"
 
 
+def format_size_short(size: int) -> str:
+    """Compact size for table cells: 890K, 1.2M, 954M."""
+    size = float(size)
+    for unit in ("B", "K", "M", "G", "T"):
+        if size < 1024:
+            if unit == "B":
+                return f"{size:.0f}B"
+            return f"{size:.1f}{unit}" if size < 10 else f"{size:.0f}{unit}"
+        size /= 1024
+    return f"{size:.0f}P"
+
+
 def format_timestamp(ts: int) -> str:
     from datetime import datetime
 

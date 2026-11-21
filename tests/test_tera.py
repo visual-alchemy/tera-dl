@@ -490,6 +490,71 @@ class TestHandleMatching(unittest.TestCase):
         self.assertIsNone(self._match("clrnvt2026_08_24_x.jpg"))
 
 
+class TestTuiLayout(unittest.TestCase):
+    def test_fit_name_keeps_extension(self):
+        from tera.tui import _fit_name
+
+        self.assertEqual(_fit_name("a.txt", 20), "a.txt")
+        out = _fit_name("x" * 40 + ".mp4", 20)
+        self.assertLessEqual(len(out), 20)
+        self.assertTrue(out.endswith(".mp4"))
+        self.assertIn("\u2026", out)
+        self.assertLessEqual(len(_fit_name("hello.txt", 6)), 6)
+
+    def test_narrow_layout_help_and_theme(self):
+        import asyncio
+        try:
+            from tera.tui import TeraBoxTUI, HelpScreen
+        except ImportError:
+            self.skipTest("textual not installed")
+
+        class FakeClient:
+            def list_files(self, path, num=1000):
+                return []
+
+        async def run():
+            app = TeraBoxTUI(FakeClient(), Config())
+            async with app.run_test(size=(60, 20)) as pilot:
+                await pilot.pause()
+                self.assertTrue(app._narrow)
+                self.assertTrue(app._get_pane("local").display)
+                self.assertFalse(app._get_pane("remote").display)
+                await pilot.press("tab")
+                await pilot.pause()
+                self.assertEqual(app._active, "remote")
+                self.assertTrue(app._get_pane("remote").display)
+                self.assertFalse(app._get_pane("local").display)
+                await pilot.press("?")
+                self.assertIsInstance(app.screen, HelpScreen)
+                await pilot.press("escape")
+                before = app.theme
+                await pilot.press("t")
+                self.assertNotEqual(app.theme, before)
+
+        asyncio.run(run())
+
+    def test_wide_layout_shows_both_panes(self):
+        import asyncio
+        try:
+            from tera.tui import TeraBoxTUI
+        except ImportError:
+            self.skipTest("textual not installed")
+
+        class FakeClient:
+            def list_files(self, path, num=1000):
+                return []
+
+        async def run():
+            app = TeraBoxTUI(FakeClient(), Config())
+            async with app.run_test(size=(120, 24)) as pilot:
+                await pilot.pause()
+                self.assertFalse(app._narrow)
+                self.assertTrue(app._get_pane("local").display)
+                self.assertTrue(app._get_pane("remote").display)
+
+        asyncio.run(run())
+
+
 class TestTuiWalkRemote(unittest.TestCase):
     def test_walk_flattens_tree(self):
         try:

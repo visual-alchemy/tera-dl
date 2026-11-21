@@ -4,6 +4,21 @@ All notable changes to tera-dl.
 
 ## [Unreleased]
 
+### Added
+- TUI: single-pane layout automatically below 90 columns (Tab switches),
+  dual-pane above
+- TUI: `?` help modal listing every keybinding, and `t` to toggle theme
+- TUI: pane border titles with `~`-relative path, item count and marked count
+- TUI: `(loading...)` and `(empty)` placeholders, marked rows highlighted,
+  middle-truncated filenames that keep their extension
+- TUI: status bar split into path/message and selected-file info (size, date)
+
+### Changed
+- TUI styles moved to `tera/tui.tcss`; panes use border titles instead of a
+  separate header row, saving a line per pane
+- Pane listing no longer calls `query_one` from the worker thread; the worker
+  returns entries and the UI updates on the main thread
+
 ## [0.3.0] — 2026-11-22
 
 ### Added

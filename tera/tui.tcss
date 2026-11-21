@@ -1,0 +1,119 @@
+Screen {
+    layout: vertical;
+}
+
+#panes {
+    height: 1fr;
+}
+
+#panes.-narrow {
+    layout: vertical;
+}
+
+#status-bar {
+    height: 1;
+    background: $boost;
+    padding: 0 1;
+}
+
+#status-left {
+    width: 1fr;
+}
+
+#status-right {
+    width: auto;
+    color: $text-muted;
+}
+
+FilePane {
+    width: 1fr;
+    height: 1fr;
+    border: round $panel;
+}
+
+FilePane.-active {
+    border: round $accent;
+}
+
+FilePane ListView {
+    height: 1fr;
+}
+
+FilePane .pane-empty {
+    padding: 1 2;
+    color: $text-muted;
+}
+
+ListView > ListItem.-marked {
+    background: $warning 20%;
+}
+
+HelpScreen {
+    align: center middle;
+}
+
+HelpScreen > Vertical {
+    width: 64;
+    max-width: 90%;
+    height: auto;
+    max-height: 90%;
+    border: round $accent;
+    padding: 1 2;
+    background: $surface;
+}
+
+HelpScreen Static {
+    height: auto;
+}
+
+HelpScreen #help-buttons {
+    height: auto;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+InputDialog {
+    align: center middle;
+}
+
+InputDialog > Vertical {
+    width: 60%;
+    height: auto;
+    border: round $accent;
+    padding: 1 2;
+    background: $surface;
+}
+
+InputDialog Input {
+    margin: 1 0;
+}
+
+InputDialog #dialog-buttons {
+    height: auto;
+    align-horizontal: right;
+}
+
+InputDialog Button {
+    margin-left: 1;
+}
+
+ConfirmDialog {
+    align: center middle;
+}
+
+ConfirmDialog > Vertical {
+    width: 50%;
+    height: auto;
+    border: round $warning;
+    padding: 1 2;
+    background: $surface;
+}
+
+ConfirmDialog #confirm-buttons {
+    height: auto;
+    align-horizontal: center;
+}
+
+ConfirmDialog Button {
+    margin: 0 1;
+}

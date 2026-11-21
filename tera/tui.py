@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import requests
+from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
@@ -14,10 +15,32 @@ from textual.widgets import Header, Footer, ListView, ListItem, Static, Label, I
 from textual.binding import Binding
 from textual import work
 
+from . import __version__
 from .client import TeraBoxClient, TeraBoxError
 from .config import Config, HEADERS
 from .uploader import upload_file
-from .formatter import format_size
+from .formatter import format_size, format_timestamp
+
+
+def _short_path(path: str, is_local: bool) -> str:
+    """Home-relative path for the pane border title."""
+    home = str(Path.home())
+    if is_local and (path == home or path.startswith(home + os.sep)):
+        return "~" + path[len(home):]
+    return path
+
+
+def _fit_name(name: str, budget: int) -> str:
+    """Middle-truncate keeping the extension visible."""
+    if len(name) <= budget:
+        return name
+    if budget < 6:
+        return name[: max(1, budget - 1)] + "\u2026"
+    ext = Path(name).suffix
+    if ext and len(ext) <= 8 and budget - len(ext) >= 4:
+        head = budget - len(ext) - 1
+        return name[:head] + "\u2026" + ext
+    return name[: budget - 1] + "\u2026"
 
 
 @dataclass
@@ -26,6 +49,7 @@ class FileEntry:
     is_dir: bool
     size: int
     path: str
+    mtime: int = 0
 
 
 class PaneBackend:
@@ -71,6 +95,7 @@ class LocalBackend(PaneBackend):
                 is_dir=item.is_dir(),
                 size=item.stat().st_size if item.is_file() else 0,
                 path=str(item),
+                mtime=int(item.stat().st_mtime),
             ))
         return entries
 
@@ -120,6 +145,7 @@ class RemoteBackend(PaneBackend):
                 is_dir=int(f.get("isdir", 0)) == 1,
                 size=int(f.get("size", 0)),
                 path=file_path,
+                mtime=int(f.get("server_mtime") or 0),
             ))
         return entries
 
@@ -146,25 +172,6 @@ class RemoteBackend(PaneBackend):
 
 
 class FilePane(Vertical):
-    DEFAULT_CSS = """
-    FilePane {
-        width: 1fr;
-        height: 1fr;
-        border: solid $panel;
-    }
-    FilePane.-active {
-        border: solid $accent;
-    }
-    FilePane #pane-header {
-        background: $boost;
-        padding: 0 1;
-        text-style: bold;
-    }
-    FilePane.-active #pane-header {
-        background: $accent 30%;
-    }
-    """
-
     def __init__(self, title: str, backend: PaneBackend, cwd: str, id: str = None):
         super().__init__(id=id)
         self.title = title
@@ -178,17 +185,40 @@ class FilePane(Vertical):
         return self._cwd
 
     def compose(self) -> ComposeResult:
-        yield Static(self._header_text(), id="pane-header")
         yield ListView(id="file-list")
 
-    def _header_text(self) -> str:
+    def _refresh_title(self) -> None:
+        path = _short_path(self._cwd, self.backend.is_local)
+        self.border_title = f"{self.title} — {path}"
         count = sum(1 for e in self.entries if e.name != "..")
-        parts = [f"{self.title}: {self._cwd}"]
+        bits = []
         if count:
-            parts.append(f"({count} item{'s' if count != 1 else ''})")
+            bits.append(f"{count} item{'s' if count != 1 else ''}")
         if self.marked:
-            parts.append(f"{len(self.marked)} marked")
-        return " ".join(parts)
+            bits.append(f"{len(self.marked)} marked")
+        self.border_subtitle = " · ".join(bits)
+
+    def _name_budget(self) -> int:
+        width = self.size.width
+        if not width:
+            panes = 1 if getattr(self.app, "_narrow", False) else 2
+            width = max(20, (self.app.size.width or 80) // panes)
+        return max(12, width - 14)
+
+    def set_loading(self) -> None:
+        self.entries = []
+        self.marked.clear()
+        lv = self.query_one("#file-list", ListView)
+        lv.clear()
+        lv.append(ListItem(Label("(loading...)", classes="pane-empty")))
+        lv.index = None
+        self._refresh_title()
+
+    def on_key(self, event) -> None:
+        # Focus lives in the ListView; catch Tab here before Screen's focus_next.
+        if event.key == "tab":
+            event.stop()
+            self.app.action_switch_pane()
 
     def set_active(self, active: bool) -> None:
         if active:
@@ -196,40 +226,40 @@ class FilePane(Vertical):
             self.query_one("#file-list", ListView).focus()
         else:
             self.remove_class("-active")
-        self.query_one("#pane-header", Static).update(self._header_text())
 
     def navigate(self, path: str) -> None:
         self._cwd = path
         self.marked.clear()
-        self.query_one("#pane-header", Static).update(self._header_text())
+        self._refresh_title()
 
     def populate(self, entries: list[FileEntry]) -> None:
         self.entries = entries
         self.marked.clear()
         lv = self.query_one("#file-list", ListView)
         lv.clear()
-        for e in entries:
-            lv.append(self._make_item(e))
-        lv.index = 0 if entries else None
-        self.query_one("#pane-header", Static).update(self._header_text())
-
-    def _make_item(self, entry: FileEntry) -> ListItem:
-        idx = len(self.entries) - 1  # will be correct after append
-        # We need index from the entries list
-        try:
-            idx = self.entries.index(entry)
-        except ValueError:
-            pass
-        marked = idx in self.marked
-        prefix = "[bold yellow]*[/bold yellow] " if marked else "  "
-        if entry.is_dir:
-            if entry.name == "..":
-                text = f"{prefix}[dim]../[/dim]"
-            else:
-                text = f"{prefix}[bold bright_green]{entry.name}/[/bold bright_green]"
+        if not entries:
+            lv.append(ListItem(Label("(empty)", classes="pane-empty")))
+            lv.index = None
         else:
-            text = f"{prefix}{entry.name}  [dim]{format_size(entry.size)}[/dim]"
-        return ListItem(Label(text))
+            for i, e in enumerate(entries):
+                lv.append(self._make_item(e, i))
+            lv.index = 0
+        self._refresh_title()
+
+    def _make_item(self, entry: FileEntry, idx: int) -> ListItem:
+        marked = idx in self.marked
+        prefix = "[bold yellow]▌[/bold yellow] " if marked else "  "
+        name = entry.name + ("/" if entry.is_dir and entry.name != ".." else "")
+        name = escape(_fit_name(name, self._name_budget()))
+        if entry.is_dir:
+            body = f"[dim]{name}[/dim]" if entry.name == ".." else f"[bold bright_green]{name}[/bold bright_green]"
+            text = f"{prefix}{body}"
+        else:
+            text = f"{prefix}{name:<{self._name_budget()}} [dim]{format_size(entry.size):>9}[/dim]"
+        item = ListItem(Label(text))
+        if marked:
+            item.add_class("-marked")
+        return item
 
     def toggle_mark(self) -> None:
         lv = self.query_one("#file-list", ListView)
@@ -253,11 +283,10 @@ class FilePane(Vertical):
     def _redraw(self, cursor_idx: int = 0) -> None:
         lv = self.query_one("#file-list", ListView)
         lv.clear()
-        for e in self.entries:
-            lv.append(self._make_item(e))
-        safe_idx = min(cursor_idx, len(self.entries) - 1) if self.entries else None
-        lv.index = safe_idx
-        self.query_one("#pane-header", Static).update(self._header_text())
+        for i, e in enumerate(self.entries):
+            lv.append(self._make_item(e, i))
+        lv.index = min(cursor_idx, len(self.entries) - 1) if self.entries else None
+        self._refresh_title()
 
     def marked_entries(self) -> list[FileEntry]:
         return [self.entries[i] for i in sorted(self.marked) if i < len(self.entries)]
@@ -273,29 +302,6 @@ class FilePane(Vertical):
 
 
 class InputDialog(ModalScreen):
-    CSS = """
-    InputDialog {
-        align: center middle;
-    }
-    InputDialog > Vertical {
-        width: 60%;
-        height: auto;
-        border: solid $accent;
-        padding: 1 2;
-        background: $surface;
-    }
-    InputDialog Input {
-        margin: 1 0;
-    }
-    InputDialog #dialog-buttons {
-        height: auto;
-        align-horizontal: right;
-    }
-    InputDialog Button {
-        margin-left: 1;
-    }
-    """
-
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, prompt: str, initial: str = ""):
@@ -328,26 +334,6 @@ class InputDialog(ModalScreen):
 
 
 class ConfirmDialog(ModalScreen):
-    CSS = """
-    ConfirmDialog {
-        align: center middle;
-    }
-    ConfirmDialog > Vertical {
-        width: 50%;
-        height: auto;
-        border: solid $warning;
-        padding: 1 2;
-        background: $surface;
-    }
-    ConfirmDialog #confirm-buttons {
-        height: auto;
-        align-horizontal: center;
-    }
-    ConfirmDialog Button {
-        margin: 0 1;
-    }
-    """
-
     BINDINGS = [Binding("escape", "cancel", "No")]
 
     def __init__(self, message: str):
@@ -368,23 +354,47 @@ class ConfirmDialog(ModalScreen):
         self.dismiss(False)
 
 
+class HelpScreen(ModalScreen):
+    BINDINGS = [
+        Binding("escape", "close_help", "Close"),
+        Binding("question_mark", "close_help", "Close"),
+    ]
+
+    HELP = """[bold]tera tui — keys[/bold]
+
+[bold]Tab[/bold]          switch pane
+[bold]Enter / →[/bold]    open folder / file
+[bold]← / Backspace[/bold] parent folder
+[bold]Space / Ins[/bold]  mark file
+[bold]a[/bold]            select all (toggle)
+
+[bold]F2[/bold]  rename    [bold]F5[/bold]  copy
+[bold]F7[/bold]  mkdir     [bold]F8[/bold]  delete
+[bold]v[/bold]   view      [bold]r[/bold]   refresh
+[bold]t[/bold]   theme     [bold]?[/bold]   help
+[bold]q[/bold]   quit
+"""
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(self.HELP)
+            with Horizontal(id="help-buttons"):
+                yield Button("Close", id="close", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss()
+
+    def action_close_help(self) -> None:
+        self.dismiss()
+
+
 class TeraBoxTUI(App):
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-    #panes {
-        height: 1fr;
-    }
-    #status-bar {
-        height: 1;
-        background: $boost;
-        padding: 0 1;
-    }
-    """
+    CSS_PATH = "tui.tcss"
+    TITLE = f"tera {__version__}"
+    SUB_TITLE = "TeraBox manager"
 
     BINDINGS = [
-        Binding("tab", "switch_pane", "Switch"),
+        Binding("tab", "switch_pane", "Switch", priority=True),
         Binding("backspace", "parent", "Up"),
         Binding("f2", "rename", "Rename"),
         Binding("f5", "copy", "Copy"),
@@ -394,6 +404,8 @@ class TeraBoxTUI(App):
         Binding("insert", "toggle_mark", "Mark", show=False),
         Binding("a", "select_all", "Select All", show=False),
         Binding("r", "refresh", "Refresh", show=False),
+        Binding("t", "toggle_theme", "Theme", show=False),
+        Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -403,6 +415,7 @@ class TeraBoxTUI(App):
         self.config = config
         self._active = "local"
         self._refresh_lock: dict[str, bool] = {}  # debounce per-pane refreshes
+        self._narrow = False
         self._pending_view: Optional[dict] = None  # {dlink, name, cookie, ua, viewer}
 
     def compose(self) -> ComposeResult:
@@ -410,12 +423,26 @@ class TeraBoxTUI(App):
         with Horizontal(id="panes"):
             yield FilePane("Local", LocalBackend(), str(Path.home()), id="local-pane")
             yield FilePane("Remote", RemoteBackend(self.client), "/", id="remote-pane")
-        yield Static("Ready — Tab to switch, Enter to open, F5 to copy", id="status-bar")
+        with Horizontal(id="status-bar"):
+            yield Static("Ready — Tab to switch, Enter to open, F5 to copy", id="status-left")
+            yield Static("", id="status-right")
         yield Footer()
 
     def on_mount(self) -> None:
+        self._apply_layout(self.size.width)
         self._refresh_pane("local")
         self._refresh_pane("remote")
+
+    def on_resize(self, event) -> None:
+        self._apply_layout(event.size.width)
+
+    def _apply_layout(self, width: int) -> None:
+        """Single-pane under 90 columns, dual-pane above."""
+        self._narrow = width < 90
+        try:
+            self.query_one("#panes").set_class(self._narrow, "-narrow")
+        except Exception:
+            return
         self._update_active()
 
     # -- Pane management --
@@ -431,31 +458,48 @@ class TeraBoxTUI(App):
         return self._get_pane(other)
 
     def _update_active(self) -> None:
-        self._get_pane("local").set_active(self._active == "local")
-        self._get_pane("remote").set_active(self._active == "remote")
+        for name in ("local", "remote"):
+            pane = self._get_pane(name)
+            pane.display = (self._active == name) if self._narrow else True
+            pane.set_active(self._active == name)
+        try:
+            self._update_info(self._active_pane())
+        except Exception:
+            pass
 
     def _status(self, msg: str) -> None:
-        self.query_one("#status-bar", Static).update(msg)
+        self.query_one("#status-left", Static).update(msg)
+
+    def _status_right(self, msg: str) -> None:
+        self.query_one("#status-right", Static).update(msg)
+
+    def _update_info(self, pane: FilePane) -> None:
+        entry = pane.selected_entry()
+        marked = f" · {len(pane.marked)} marked" if pane.marked else ""
+        if not entry or entry.name == "..":
+            self._status_right("")
+        elif entry.is_dir:
+            self._status_right(f"<DIR>{marked}")
+        else:
+            when = f" · {format_timestamp(entry.mtime)}" if entry.mtime else ""
+            self._status_right(f"{format_size(entry.size)}{when}{marked}")
 
     def _refresh_pane(self, name: str) -> None:
-        """Refresh pane from main thread — spawns a worker."""
-        self._do_refresh(name)
+        """Refresh pane from main thread: show loading, then spawn a worker."""
+        if self._refresh_lock.get(name):
+            return  # already refreshing this pane
+        self._refresh_lock[name] = True
+        pane = self._get_pane(name)
+        pane.set_loading()
+        self._do_refresh(name, pane.backend, pane.cwd)
 
     @work(thread=True)
-    def _do_refresh(self, pane_name: str) -> None:
-        import time
-        if self._refresh_lock.get(pane_name):
-            return  # already refreshing this pane
-        self._refresh_lock[pane_name] = True
+    def _do_refresh(self, pane_name: str, backend, cwd: str) -> None:
         try:
-            pane = self._get_pane(pane_name)
-            backend = pane.backend
-            cwd = pane.cwd
             entries = backend.list_dir(cwd)
             if cwd != backend.home():
                 entries = [FileEntry(name="..", is_dir=True, size=0, path=backend.parent(cwd))] + entries
-            self.call_from_thread(pane.populate, entries)
-            self.call_from_thread(self._status, f"[green]{pane_name}: {cwd} ({len(entries)} items)[/green]")
+            self.call_from_thread(self._finish_refresh, pane_name, entries)
         except TeraBoxError as e:
             err = str(e)
             if "400141" in err or "need verify" in err.lower():
@@ -466,6 +510,13 @@ class TeraBoxTUI(App):
             self.call_from_thread(self._status, f"[red]Error listing {pane_name} {cwd}: {e}[/red]")
         finally:
             self._refresh_lock[pane_name] = False
+
+    def _finish_refresh(self, pane_name: str, entries: list) -> None:
+        pane = self._get_pane(pane_name)
+        pane.populate(entries)
+        count = sum(1 for e in entries if e.name != "..")
+        self._status(f"[green]{pane_name}: {pane.cwd} ({count} items)[/green]")
+        self._update_info(pane)
 
     def _refresh_pane_from_worker(self, pane_name: str) -> None:
         """Refresh pane when already inside a worker thread."""
@@ -502,9 +553,13 @@ class TeraBoxTUI(App):
         for name in ("local", "remote"):
             pane = self._get_pane(name)
             if pane.query_one("#file-list") is event.control:
-                if self._active != name:
+                # Ignore the Highlighted event fired by populate(): only follow
+                # the cursor when the user actually focused this pane.
+                if event.control.has_focus and self._active != name:
                     self._active = name
                     self._update_active()
+                if name == self._active:
+                    self._update_info(pane)
                 break
 
     def _open_selected(self) -> None:
@@ -551,6 +606,13 @@ class TeraBoxTUI(App):
         target = pane.backend.parent(pane.cwd)
         pane.navigate(target)
         self._refresh_pane(self._active)
+
+    def action_help(self) -> None:
+        self.push_screen(HelpScreen())
+
+    def action_toggle_theme(self) -> None:
+        self.theme = "textual-dark" if self.theme == "textual-light" else "textual-light"
+        self._status(f"Theme: {self.theme}")
 
     def action_refresh(self) -> None:
         if isinstance(self.screen, ModalScreen):

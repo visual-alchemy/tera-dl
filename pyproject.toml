@@ -20,3 +20,6 @@ tera = "tera.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["tera*"]
+
+[tool.setuptools.package-data]
+tera = ["*.tcss"]

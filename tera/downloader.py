@@ -4,18 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from rich.console import Console
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    BarColumn,
-    DownloadColumn,
-    TransferSpeedColumn,
-    TimeRemainingColumn,
-    TextColumn,
-)
+from rich.progress import Progress
 
 from .client import TeraBoxClient, TeraBoxError
-from .formatter import format_size
+from .formatter import format_size, progress_columns
 
 console = Console()
 
@@ -164,21 +156,13 @@ def download_file_parallel(
 
 
 
-def _progress_columns() -> list:
-    """Progress columns adapted to terminal width (narrow phones lose speed/time)."""
-    width = console.width or 80
-    columns = [
-        SpinnerColumn(),
-        TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
-        BarColumn(bar_width=None),  # None = expand to fill available space
-    ]
-    if width >= 70:
-        columns.append(DownloadColumn())
-    if width >= 90:
-        columns.append(TransferSpeedColumn())
-    if width >= 110:
-        columns.append(TimeRemainingColumn())
-    return columns
+def _shorten(counter: str, name: str, width: int) -> str:
+    """Fit counter+filename into the space left after bar/speed columns."""
+    budget = max(20, width - 35)
+    if len(counter) + len(name) <= budget:
+        return name
+    keep = max(4, budget - len(counter) - 1)
+    return name[:keep] + "\u2026"
 
 
 def download_sequential(
@@ -191,7 +175,7 @@ def download_sequential(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     with Progress(
-        *_progress_columns(),
+        *progress_columns(),
         console=console,
         transient=True,
     ) as progress:
@@ -220,12 +204,10 @@ def download_sequential(
                 except Exception:
                     pass
 
-            # Truncate long filenames so bar fits narrow terminals
+            # Shrink long filenames only as much as the terminal requires.
             desc = os.path.basename(task.filename)
             counter = f"[{idx}/{total_tasks}] "
-            max_len = 20  # hard cap — bar collapses to "..." if desc too long
-            if len(counter) + len(desc) > max_len:
-                desc = desc[: max_len - len(counter) - 1] + "\u2026"
+            desc = _shorten(counter, desc, console.width or 80)
 
             rich_task = progress.add_task(
                 counter + desc,

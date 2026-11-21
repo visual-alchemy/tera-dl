@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
-from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
+from rich.progress import Progress
 
 from .client import TeraBoxClient, TeraBoxError
 from .config import Config, API_DOMAIN, HEADERS
+from .formatter import progress_columns
 
 console = Console()
 
@@ -101,14 +102,9 @@ def upload_file(
 
         progress = None
         if on_progress is None:
-            progress = Progress(
-                TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
-                BarColumn(),
-                TimeRemainingColumn(),
-                console=console,
-            )
+            progress = Progress(*progress_columns(), console=console)
             progress.start()
-            upload_task = progress.add_task("Uploading...", total=total_blocks)
+            upload_task = progress.add_task("Uploading...", total=file_size)
 
         try:
             with open(filepath, "rb") as f:
@@ -128,7 +124,7 @@ def upload_file(
 
                     client._request_json("POST", pcs_url, params=params, files=files, timeout=120)
                     if progress:
-                        progress.update(upload_task, advance=1)
+                        progress.update(upload_task, advance=len(chunk))
                     else:
                         pct = i * 100 // total_blocks
                         notify(f"Uploading {filepath.name}... {pct}% ({i}/{total_blocks} blocks)")

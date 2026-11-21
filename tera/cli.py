@@ -14,7 +14,6 @@ from .formatter import (
     print_user_info,
     print_download_summary,
     print_share_info,
-    format_size,
 )
 
 
@@ -217,13 +216,12 @@ def create_share(ctx, path, period):
 @click.pass_context
 def account_info(ctx):
     """Show account info and storage usage."""
+    config = get_config(ctx)
     client = get_client(ctx)
     try:
-        quota = client.get_quota()
-        used = quota.get("used", 0)
-        total = quota.get("total", 0)
-        console.print(f"\n[bold]Storage:[/bold] {format_size(used)} / {format_size(total)}")
-    except TeraBoxError as e:
+        client._ensure_tokens()
+        print_user_info(verify_auth(config))
+    except (TeraBoxError, AuthError) as e:
         console.print(f"[red]Error: {e}[/red]")
 
 

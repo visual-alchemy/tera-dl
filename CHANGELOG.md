@@ -14,6 +14,11 @@ All notable changes to tera-dl.
 
 ### Changed
 - `format_size` now lives only in `formatter`; `downloader` imports it
+- `tera info` shows the same account panel as `tera auth status`
+  (username, storage, percent) instead of one storage line
+- Progress columns (speed/bytes/ETA by terminal width) are shared by
+  uploads and downloads; download filenames now use the available width
+  instead of a fixed 20-character cap
 - Removed the unused `chunk_size` config field (old configs still load)
 - TUI uploads now use `uploader.upload_file` through an `on_progress` callback
   instead of a second copy of the upload protocol, so they get the same

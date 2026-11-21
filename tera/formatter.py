@@ -2,8 +2,34 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    BarColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+    TextColumn,
+)
 
 console = Console()
+
+
+def progress_columns() -> list:
+    """Progress columns adapted to terminal width (narrow phones lose speed/time)."""
+    width = console.width or 80
+    columns = [
+        SpinnerColumn(),
+        TextColumn("[bold bright_green]{task.description}[/bold bright_green]"),
+        BarColumn(bar_width=None),  # None = expand to fill available space
+    ]
+    if width >= 70:
+        columns.append(DownloadColumn())
+    if width >= 90:
+        columns.append(TransferSpeedColumn())
+    if width >= 110:
+        columns.append(TimeRemainingColumn())
+    return columns
 
 
 def format_size(size: int) -> str:

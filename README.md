@@ -177,7 +177,7 @@ tera sync ~/storage/shared/DCIM/Camera /Photos --apply --limit 20
 
 ---
 
-### ℹ️ Utility & Configs
+### ⚙️ Utility & Configs
 
 #### `tera info`
 Displays current storage details (used vs. total space).

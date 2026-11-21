@@ -140,6 +140,24 @@ class TestDownloadChunkResume(unittest.TestCase):
             self.assertEqual(p.read_bytes(), b"FULLCONTENT")
 
 
+class TestShorten(unittest.TestCase):
+    def test_wide_terminal_keeps_full_name(self):
+        self.assertEqual(downloader_mod._shorten("[1/2] ", "short.mp4", 120), "short.mp4")
+
+    def test_narrow_terminal_truncates_to_budget(self):
+        counter = "[1/2] "
+        out = downloader_mod._shorten(counter, "x" * 100, 30)
+        self.assertTrue(out.endswith("\u2026"))
+        self.assertLessEqual(len(counter) + len(out), 20)
+
+    def test_medium_terminal_uses_available_width(self):
+        counter = "[1/2] "
+        name = "y" * 100
+        out = downloader_mod._shorten(counter, name, 80)
+        self.assertLessEqual(len(counter) + len(out), 45)
+        self.assertGreater(len(out), 20)
+
+
 class TestBlockHashes(unittest.TestCase):
     def test_multiblock(self):
         data = b"0123456789ab"  # 12 bytes

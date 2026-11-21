@@ -203,6 +203,18 @@ class TestConfigPermissions(unittest.TestCase):
         self.assertEqual(loaded.auth.tokens_refreshed_at, "2026-01-01T00:00:00")
         self.assertEqual(loaded.workers, 7)
 
+    def test_load_ignores_unknown_keys(self):
+        cfg = Config(auth=self.auth)
+        cfg.save()
+        raw = json.loads(config_mod.CONFIG_FILE.read_text())
+        raw["future_field"] = 1
+        raw["auth"]["future_auth"] = "x"
+        config_mod.CONFIG_FILE.write_text(json.dumps(raw))
+        loaded = Config.load()
+        # Unknown keys must not reset auth (used to raise TypeError -> default Config).
+        self.assertEqual(loaded.auth.ndus, "2:ndus")
+        self.assertEqual(loaded.workers, cfg.workers)
+
     def test_load_warns_and_fixes_permissive(self):
         cfg = Config(auth=self.auth)
         cfg.save()
@@ -218,6 +230,34 @@ class TestConfigPermissions(unittest.TestCase):
             self.assertIn("security", buf.read())
         self.assertEqual(loaded.auth.ndus, "2:ndus")
         self.assertEqual(stat.S_IMODE(config_mod.CONFIG_FILE.stat().st_mode), 0o600)
+
+
+class TestViewAndroid(unittest.TestCase):
+    def test_download_files_kwargs_match_real_signature(self):
+        import inspect
+        import shutil
+        from tera import cli as cli_mod
+        from tera.downloader import download_files
+
+        captured = {}
+
+        class FakeTask:
+            status = "done"
+
+        def fake_download_files(*args, **kwargs):
+            # Bind against the real signature: catches keyword typos like `tasks=`.
+            inspect.signature(download_files).bind(*args, **kwargs)
+            captured.update(kwargs)
+            return [FakeTask()]
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with mock.patch.object(downloader_mod, "download_files", fake_download_files), \
+                mock.patch("subprocess.Popen"), \
+                mock.patch.dict(os.environ, {"TMPDIR": tmp}):
+            cli_mod._view_android(None, "https://example.test/dlink", "v.mp4", ".mp4", "ndus=x")
+
+        self.assertEqual(captured["urls_names_sizes"][0][:2], ("https://example.test/dlink", "v.mp4"))
 
 
 class TestTokenFreshness(unittest.TestCase):
@@ -246,8 +286,8 @@ class TestHandleMatching(unittest.TestCase):
         "risaatjan", "fathbayy", "p", "ayu", "anyaer", "anyageraldine", "viinsatr",
         "iniyesika", "angiemstwn", "ecasreveirelav", "michelleeeck99",
         "trslsabila2", "rheanne_felichia",
+        "natasiadeline",
     ]
-
     def _match(self, filename):
         return uploader_mod.match_folder(uploader_mod._extract_stem(filename), self.FOLDERS)
 
@@ -273,14 +313,62 @@ class TestHandleMatching(unittest.TestCase):
         self.assertEqual(self._match("nikenandalusi2026_09_06_x.jpg"), "nikendalusi")
         self.assertEqual(self._match("kinan_exclu.mp4"), "Kinandaputriii")
         self.assertEqual(self._match("livy4youu2026_08_24_x.jpg"), "livyrenata")
+        self.assertEqual(self._match("xoxoaop2026_09_15_x.jpg"), "ptrcia_ao")
+        self.assertEqual(self._match("xoxoaop_2026_09_15_x.jpg"), "ptrcia_ao")
+        self.assertEqual(self._match("youknowwhttt1.jpeg"), "trslsabila2")
+        self.assertEqual(self._match("youknowwhttt (1).jpg"), "trslsabila2")
+        self.assertEqual(self._match("youknowwhttt_4022433199002776264 (1).jpg"), "trslsabila2")
+        self.assertEqual(self._match("nastasiadeline1.jpeg"), "natasiadeline")
+        self.assertEqual(self._match("nastasiadeline2026_11_02_21_27_35x.jpg"), "natasiadeline")
+        self.assertEqual(self._match("michelleeeck99.jpg"), "michelleeeck99")
+        self.assertEqual(self._match("laraskinandaaa2026_09_15_x.jpg"), "Kinandaputriii")
+        self.assertEqual(self._match("youknowwhttt2026_09_15_x.jpg"), "trslsabila2")
 
     def test_short_folder_not_prefix_matched(self):
         self.assertIsNone(self._match("patagonia2026_01_01_x.jpg"))  # 'p' must not match
 
     def test_unknown_skipped(self):
-        self.assertIsNone(self._match("youknowwhttt2026_09_15_x.jpg"))
+        self.assertIsNone(self._match("unknownhandle2026_09_15_x.jpg"))
         self.assertIsNone(self._match("clrnvt2026_08_24_x.jpg"))
 
+
+class TestTuiWalkRemote(unittest.TestCase):
+    def test_walk_flattens_tree(self):
+        try:
+            from tera.tui import TeraBoxTUI
+        except ImportError:
+            self.skipTest("textual not installed")
+
+        tree = {
+            "/": [
+                {"server_filename": "d", "isdir": 1, "path": "/d", "size": 0},
+                {"server_filename": "a.txt", "isdir": 0, "path": "/a.txt", "size": 5},
+            ],
+            "/d": [
+                {"server_filename": "b.txt", "isdir": 0, "path": "/d/b.txt", "size": 7},
+                {"server_filename": "sub", "isdir": 1, "path": "/d/sub", "size": 0},
+            ],
+            "/d/sub": [
+                {"server_filename": "c.txt", "isdir": 0, "path": "/d/sub/c.txt", "size": 9},
+            ],
+        }
+
+        class FakeClient:
+            def list_files(self, path, num=1000):
+                return tree[path]
+
+        tui = TeraBoxTUI.__new__(TeraBoxTUI)
+        tui.client = FakeClient()
+        items = []
+        tui._walk_remote("/", "", items)
+        self.assertEqual(
+            sorted(items),
+            sorted([
+                ("/a.txt", "a.txt", 5),
+                ("/d/b.txt", "d/b.txt", 7),
+                ("/d/sub/c.txt", "d/sub/c.txt", 9),
+            ]),
+        )
 
 if __name__ == "__main__":
     unittest.main()

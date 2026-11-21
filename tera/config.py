@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 
 CONFIG_DIR = Path.home() / ".config" / "tera"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -73,7 +73,13 @@ class Config:
                     )
                     os.chmod(CONFIG_FILE, 0o600)
                 data = json.loads(CONFIG_FILE.read_text())
-                auth = AuthConfig(**data.pop("auth", {}))
+                # Ignore keys from newer/older versions instead of failing the
+                # whole load — a stray key used to reset auth to empty.
+                known = {f.name for f in fields(cls)}
+                data = {k: v for k, v in data.items() if k in known}
+                auth_data = data.pop("auth", {})
+                auth_known = {f.name for f in fields(AuthConfig)}
+                auth = AuthConfig(**{k: v for k, v in auth_data.items() if k in auth_known})
                 return cls(auth=auth, **data)
             except (json.JSONDecodeError, TypeError):
                 pass

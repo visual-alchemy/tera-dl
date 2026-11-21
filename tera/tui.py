@@ -743,14 +743,7 @@ class TeraBoxTUI(App):
         if pane.backend.is_local:
             self._do_upload_entries(entries, dest_dir)
         else:
-            # Download — directories not supported yet
-            files = [e for e in entries if not e.is_dir and e.name != ".."]
-            if not files:
-                self._status("[yellow]Directory download not supported yet[/yellow]")
-                return
-            self._do_batch_download(
-                [(f.path, f.name, f.size) for f in files], dest_dir
-            )
+            self._do_download_entries(entries, dest_dir)
 
     @work(thread=True)
     def _do_upload_entries(self, entries: list[FileEntry], remote_dir: str) -> None:
@@ -868,10 +861,38 @@ class TeraBoxTUI(App):
             self.call_from_thread(self._status, f"[green]Upload complete: {succeeded}/{total} file(s)[/green]")
         self._refresh_pane_from_worker("remote")
 
+    def _walk_remote(self, path: str, rel_prefix: str, items: list) -> None:
+        """Recursively collect (remote_path, rel_name, size) for files under path."""
+        for f in self.client.list_files(path, num=1000):
+            name = f.get("server_filename", "unknown")
+            full = f.get("path", "") or f"{path.rstrip('/')}/{name}"
+            rel = os.path.join(rel_prefix, name) if rel_prefix else name
+            if int(f.get("isdir", 0)) == 1:
+                self._walk_remote(full, rel, items)
+            else:
+                items.append((full, rel, int(f.get("size", 0))))
+
     @work(thread=True)
-    def _do_batch_download(
-        self, items: list[tuple[str, str, int]], dest_dir: str
-    ) -> None:
+    def _do_download_entries(self, entries: list[FileEntry], dest_dir: str) -> None:
+        """Download remote entries (files + directories) to local pane cwd."""
+        items = []
+        try:
+            for e in entries:
+                if e.name == "..":
+                    continue
+                if e.is_dir:
+                    self._walk_remote(e.path, e.name, items)
+                else:
+                    items.append((e.path, e.name, e.size))
+        except TeraBoxError as e:
+            self.call_from_thread(self._status, f"[red]Listing failed: {e}[/red]")
+            return
+        if not items:
+            self.call_from_thread(self._status, "[yellow]No files in selection[/yellow]")
+            return
+        self._batch_download_impl(items, dest_dir)
+
+    def _batch_download_impl(self, items: list[tuple[str, str, int]], dest_dir: str) -> None:
         total = len(items)
         errors = []
         succeeded = 0
@@ -928,8 +949,6 @@ class TeraBoxTUI(App):
         remote_path = f"{remote_dir.rstrip('/')}/{filename}"
         dlog(f"remote_path: {remote_path}")
         dlog(f"file_size: {file_size}")
-        dlog(f"bdstoken: {self.client.config.auth.bdstoken}")
-        dlog(f"session cookies: {[(c.name, c.value[:15]) for c in self.client.session.cookies]}")
 
         # Compute block hashes
         block_list = []

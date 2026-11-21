@@ -140,7 +140,8 @@ def _extract_stem(filename: str) -> str:
     """Handle part of a filename, i.e. everything before the timestamp token."""
     base = os.path.splitext(filename)[0]
     m = re.split(r"20\d{2}[_\-]\d{2}[_\-]\d{2}", base, maxsplit=1)
-    return (m[0] if m else base).strip().lower()
+    # strip trailing separators left by the timestamp split (e.g. "xoxoaop_")
+    return (m[0] if m else base).strip().rstrip("_").rstrip("-").lower()
 
 
 def _normalize(s: str) -> str:
@@ -159,29 +160,51 @@ OVERRIDES = {
     "kinan_exclu": "Kinandaputriii",
     "kinan_exclu1": "Kinandaputriii",
     "livy4youu": "livyrenata",
+    "xoxoaop": "ptrcia_ao",
+    "laraskinandaaa": "Kinandaputriii",
+    "youknowwhttt": "trslsabila2",
+    "nastasiadeline": "natasiadeline",
 }
 
 
 def match_folder(stem: str, folders: list[str]) -> Optional[str]:
     """Resolve a filename stem to a remote folder name, or None to skip."""
-    if stem in OVERRIDES:
-        return OVERRIDES[stem]
-    n = _normalize(stem)
-    if not n:
-        return None
-
     by_norm = {}
     for f in folders:
         fn = _normalize(f)
         if fn:
             by_norm.setdefault(fn, f)
 
-    if n in by_norm:
-        return by_norm[n]
+    def resolve(s: str) -> Optional[str]:
+        if s in OVERRIDES:
+            return OVERRIDES[s]
+        n = _normalize(s)
+        if not n:
+            return None
+        if n in by_norm:
+            return by_norm[n]
+        # Prefix match, but only for folder names >= 4 chars to avoid 'p', 'ayu', etc.
+        hits = [f for fn, f in by_norm.items() if len(fn) >= 4 and n.startswith(fn)]
+        return hits[0] if len(hits) == 1 else None
 
-    # Prefix match, but only for folder names >= 4 chars to avoid 'p', 'ayu', etc.
-    hits = [f for fn, f in by_norm.items() if len(fn) >= 4 and n.startswith(fn)]
-    return hits[0] if len(hits) == 1 else None
+    r = resolve(stem)
+    if r:
+        return r
+
+    # Fallbacks for Instagram dedup/ID suffixes:
+    #   youknowwhttt1 -> youknowwhttt
+    #   youknowwhttt (1) -> youknowwhttt
+    #   youknowwhttt_4022433199002776264 (1) -> youknowwhttt
+    for cand in (
+        re.sub(r"\s*\(\d+\)$", "", stem),
+        re.sub(r"_\d{15,}.*$", "", stem),
+        re.sub(r"\d+$", "", stem),
+    ):
+        if cand and cand != stem:
+            r = resolve(cand)
+            if r:
+                return r
+    return None
 
 
 def sync_local_dir(
@@ -199,8 +222,14 @@ def sync_local_dir(
     """
     # NOTE: do NOT use Path.resolve() here — on Termux/Python 3.14
     # Path(".").resolve() raises FileNotFoundError via strict realpath
-    # when CWD goes through the ~/storage symlink. abspath() never raises.
-    local = Path(os.path.abspath(local_dir))
+    # when CWD goes through the ~/storage symlink. abspath() raises only
+    # when CWD itself vanished, so guard it too.
+    try:
+        local = Path(os.path.abspath(local_dir))
+    except OSError:
+        # CWD can vanish (deleted dir / broken storage symlink); abspath then
+        # raises FileNotFoundError from os.getcwd(). Fall back to home.
+        local = Path(os.path.join(str(Path.home()), local_dir))
     if not local.is_dir():
         raise TeraBoxError(f"Local directory not found: {local_dir} (resolved: {local})")
     remote_folders = [

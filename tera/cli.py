@@ -317,7 +317,7 @@ def _view_android(client, dlink: str, name: str, ext: str, cookie: str) -> None:
 
     console.print(f"[dim]Downloading {name} to temp...[/dim]")
     try:
-        results = download_files(client=client, tasks=[(dlink, name, 0)],
+        results = download_files(client=client, urls_names_sizes=[(dlink, name, 0)],
                                  dest_dir=dest, workers=4)
         if results and results[0].status == "done":
             local_path = _os.path.join(dest, name)

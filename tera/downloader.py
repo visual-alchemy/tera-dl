@@ -15,6 +15,7 @@ from rich.progress import (
 )
 
 from .client import TeraBoxClient, TeraBoxError
+from .formatter import format_size
 
 console = Console()
 
@@ -27,14 +28,6 @@ class DownloadTask:
     size: int = 0
     status: str = "pending"
     error: str = ""
-
-
-def format_size(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} PB"
 
 
 def download_chunk(
@@ -506,7 +499,11 @@ def download_single(
     if shorturl:
         return download_from_share(client, f"https://terabox.com/s/{shorturl}", dest_dir, workers, pwd)
 
-    # Assume it's a drive path
+    # Assume it's a drive path — normalize trailing slash first (except root),
+    # otherwise dir detection fails and it falls through to get_download_link,
+    # which 403s on directories.
+    if len(source) > 1:
+        source = source.rstrip("/")
     try:
         entry = _drive_entry(client, source)
         if int(entry.get("isdir") or 0) == 1:

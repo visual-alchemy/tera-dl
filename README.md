@@ -39,7 +39,16 @@ pip install --user tera-dl
 ```bash
 git clone https://github.com/visual-alchemy/tera-dl.git
 cd tera-dl
-pip install .
+pip install -e .
+```
+
+Editable install means code changes are live — after a `git pull` you only need
+to re-run the install when the version or entry points change:
+
+```bash
+make update    # git pull --ff-only + pip install -e . + tests
+make install   # just pip install -e .
+make test      # python3 -m unittest discover -s tests
 ```
 
 ---

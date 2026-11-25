@@ -146,6 +146,7 @@ Downloads files from drive paths or public share links (supports multiple links/
   - `-o, --output PATH`: Custom output directory (default: `~/Downloads/tera`).
   - `-w, --workers INTEGER`: Number of parallel workers to use.
   - `-p, --pwd TEXT`: Password for password-protected share links.
+  - `--retries INTEGER`: Retry passes for sources that had failures (default: `1`). Each pass re-resolves only the failed sources; files already complete on disk are skipped by size, so nothing is re-downloaded.
 
 ```bash
 # Download from drive
@@ -153,7 +154,12 @@ tera dl /Videos/movie.mp4
 
 # Download multiple public sharing links at once
 tera dl https://terabox.com/s/link1 https://terabox.com/s/link2 -o ./my-downloads
+
+# Try failed links up to 3 extra times before giving up
+tera dl https://terabox.com/s/link1 --retries 3
 ```
+
+Exits with status `1` if files are still failing after the retry passes.
 
 ---
 

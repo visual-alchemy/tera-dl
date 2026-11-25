@@ -96,13 +96,51 @@ def list_files(ctx, path, num):
         raise click.Abort()
 
 
+def download_sources(
+    client: TeraBoxClient, sources, dest: str, workers: int, pwd: str, retries: int = 1
+) -> list:
+    """Download every source, then re-run only the sources that had failures.
+
+    Files already complete on disk are skipped by size, so a retry pass only
+    transfers what is missing. Returns the sources that still failed.
+    """
+    import time
+
+    pending = list(sources)
+    for attempt in range(retries + 1):
+        if attempt:
+            console.print(
+                f"\n[yellow]Retry {attempt}/{retries}: {len(pending)} source(s) "
+                f"with earlier failures[/yellow]"
+            )
+            time.sleep(2.0 * attempt)  # back off; TeraBox throttles fast retries
+        again = []
+        total = len(pending)
+        for i, source in enumerate(pending, 1):
+            tag = f"[link {i}/{total}] " if total > 1 else ""
+            console.print(f"\n[bold cyan]{tag}{source}[/bold cyan]")
+            if i > 1 and TeraBoxClient.parse_share_url(source):
+                time.sleep(1.0)  # throttle between share links to avoid rate limit
+            results = download_single(client, source, dest, workers=workers, pwd=pwd)
+            # ponytail: an empty result set (link resolution failed) also counts
+            # as a failure, so it gets the retry pass; upgrade if empty folders
+            # ever need to be distinguished from errors.
+            if any(r.status == "failed" for r in results) or not results:
+                again.append(source)
+        pending = again
+        if not pending:
+            break
+    return pending
+
+
 @main.command("dl")
 @click.argument("sources", nargs=-1, required=True)
 @click.option("-o", "--output", default=None, help="Output directory")
 @click.option("-w", "--workers", default=None, type=int, help="Parallel download workers")
 @click.option("-p", "--pwd", default="", help="Password for protected share links")
+@click.option("--retries", default=1, type=int, help="Retry passes for failed sources")
 @click.pass_context
-def download(ctx, sources, output, workers, pwd):
+def download(ctx, sources, output, workers, pwd, retries):
     """Download from share links or drive paths.
 
     SOURCES can be TeraBox share URLs (https://terabox.com/s/xxxxx)
@@ -114,16 +152,10 @@ def download(ctx, sources, output, workers, pwd):
     dest = output or config.download_dir
     w = workers or config.workers
 
-    import time
-    total = len(sources)
-    for i, source in enumerate(sources, 1):
-        tag = f"[link {i}/{total}] " if total > 1 else ""
-        console.print(f"\n[bold cyan]{tag}{source}[/bold cyan]")
-        if i > 1 and TeraBoxClient.parse_share_url(source):
-            time.sleep(1.0)  # throttle between share links to avoid rate limit
-        results = download_single(client, source, dest, workers=w, pwd=pwd)
-        if results:
-            print_download_summary(results)
+    failed = download_sources(client, sources, dest, w, pwd, retries)
+    if failed:
+        console.print(f"\n[red]{len(failed)} source(s) still failing after retries.[/red]")
+        raise SystemExit(1)
 
 
 @main.command("ul")
@@ -399,8 +431,9 @@ def tui_cmd(ctx):
 @click.option("-o", "--output", default=None, help="Output directory")
 @click.option("-w", "--workers", default=None, type=int, help="Parallel download workers")
 @click.option("-p", "--pwd", default="", help="Password for protected share links")
+@click.option("--retries", default=1, type=int, help="Retry passes for failed sources")
 @click.pass_context
-def download_standalone(ctx, sources, output, workers, pwd):
+def download_standalone(ctx, sources, output, workers, pwd, retries):
     """Download from share links or drive paths directly."""
     ctx.ensure_object(dict)
     config = Config.load()
@@ -409,16 +442,10 @@ def download_standalone(ctx, sources, output, workers, pwd):
     dest = output or config.download_dir
     w = workers or config.workers
 
-    import time
-    total = len(sources)
-    for i, source in enumerate(sources, 1):
-        tag = f"[link {i}/{total}] " if total > 1 else ""
-        console.print(f"\n[bold cyan]{tag}{source}[/bold cyan]")
-        if i > 1 and TeraBoxClient.parse_share_url(source):
-            time.sleep(1.0)  # throttle between share links to avoid rate limit
-        results = download_single(client, source, dest, workers=w, pwd=pwd)
-        if results:
-            print_download_summary(results)
+    failed = download_sources(client, sources, dest, w, pwd, retries)
+    if failed:
+        console.print(f"\n[red]{len(failed)} source(s) still failing after retries.[/red]")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

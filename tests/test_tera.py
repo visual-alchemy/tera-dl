@@ -724,6 +724,59 @@ class TestTuiTable(unittest.TestCase):
             asyncio.run(run())
 
 
+class TestDownloadSourcesRetry(unittest.TestCase):
+    def test_retry_only_failed_sources(self):
+        from tera import cli as cli_mod
+
+        calls = []
+
+        def fake_single(client, source, dest, workers=1, pwd=""):
+            calls.append(source)
+            if source == "bad" and calls.count("bad") == 1:
+                return [downloader_mod.DownloadTask("u", "f", dest, status="failed", error="boom")]
+            if source == "empty" and calls.count("empty") == 1:
+                return []
+            return [downloader_mod.DownloadTask("u", "f", dest, status="done")]
+
+        with mock.patch.object(cli_mod, "download_single", fake_single), \
+                mock.patch("time.sleep", lambda *_: None):
+            failed = cli_mod.download_sources(None, ["good", "bad", "empty"], "/tmp", 1, "", 1)
+
+        self.assertEqual(calls, ["good", "bad", "empty", "bad", "empty"])
+        self.assertEqual(failed, [])
+
+    def test_failure_survives_all_retries(self):
+        from tera import cli as cli_mod
+
+        calls = []
+
+        def always_fail(client, source, dest, workers=1, pwd=""):
+            calls.append(source)
+            return [downloader_mod.DownloadTask("u", "f", dest, status="failed", error="nope")]
+
+        with mock.patch.object(cli_mod, "download_single", always_fail), \
+                mock.patch("time.sleep", lambda *_: None):
+            failed = cli_mod.download_sources(None, ["x"], "/tmp", 1, "", 2)
+
+        self.assertEqual(calls, ["x", "x", "x"])
+        self.assertEqual(failed, ["x"])
+
+    def test_zero_retries_is_single_pass(self):
+        from tera import cli as cli_mod
+
+        calls = []
+
+        def always_fail(client, source, dest, workers=1, pwd=""):
+            calls.append(source)
+            return [downloader_mod.DownloadTask("u", "f", dest, status="failed")]
+
+        with mock.patch.object(cli_mod, "download_single", always_fail):
+            failed = cli_mod.download_sources(None, ["x"], "/tmp", 1, "", 0)
+
+        self.assertEqual(calls, ["x"])
+        self.assertEqual(failed, ["x"])
+
+
 class TestTuiWalkRemote(unittest.TestCase):
     def test_walk_flattens_tree(self):
         try:

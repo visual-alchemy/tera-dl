@@ -5,6 +5,9 @@ All notable changes to tera-dl.
 ## [Unreleased]
 
 ### Added
+- `tera dl` / `tera-dl`: `--retries N` runs retry passes for sources that had
+  failures; completed files are skipped by size, and the command exits `1` if
+  anything is still failing (default `1` retry pass)
 - TUI: `?` help modal listing every keybinding, and `t` to toggle theme
 - TUI: adjustable pane split with `[` / `]` (30–70%)
 - TUI: transfer panel with a progress bar for uploads and downloads

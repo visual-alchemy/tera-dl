@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tera"
-version = "0.3.0"
+version = "0.4.0"
 description = "TeraBox CLI - Bypass download/upload limitations"
 requires-python = ">=3.9"
 dependencies = [
     "click>=8.1",
     "requests>=2.31",
     "rich>=13.0",
-    "textual>=0.40",
+    "textual>=0.86",
 ]
 
 [project.scripts]

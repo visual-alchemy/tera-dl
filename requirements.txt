@@ -1,4 +1,4 @@
 click>=8.1
 requests>=2.31
 rich>=13.0
-textual>=0.40
+textual>=0.86

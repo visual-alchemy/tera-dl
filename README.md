@@ -42,6 +42,14 @@ cd tera-dl
 pip install -e .
 ```
 
+If the system Python is not writable (Debian/Ubuntu, PEP 668), use the venv
+target instead:
+
+```bash
+make venv
+source .venv/bin/activate
+```
+
 Editable install means code changes are live — after a `git pull` you only need
 to re-run the install when the version or entry points change:
 
@@ -50,6 +58,20 @@ make update    # git pull --ff-only + pip install -e . + tests
 make install   # just pip install -e .
 make test      # python3 -m unittest discover -s tests
 ```
+
+### Platform support
+
+Android (Termux), Linux and macOS. Pure Python, no compiler needed.
+
+| | CLI | `tera view` | `tera tui` |
+|---|---|---|---|
+| Termux | ✓ | mpv-android / `termux-open` | ✓ |
+| Linux | ✓ | `mpv`, else `xdg-open` | ✓ |
+| macOS | ✓ | `mpv`, else `open` | ✓ |
+
+Termux extras (optional): `pkg install mpv termux-api` for playback.
+
+`tera tui` needs Textual ≥ 0.86 for the theme system used by `t` and `tui.tcss`.
 
 ---
 
@@ -209,7 +231,12 @@ tera info
 
 #### `tera view [PATH]`
 Plays a drive file without a full manual download. On Android it downloads to a
-temp folder and opens it in mpv-android; on desktop it streams in mpv.
+temp folder and opens it in mpv-android; on desktop it opens the stream in the
+best available player.
+
+Player lookup order: `termux-open` (Android) → `mpv` → `open` (macOS) /
+`xdg-open` (Linux). Only `mpv` can forward the auth cookie, so the other two
+may be refused by TeraBox for protected links.
 ```bash
 tera view /Videos/movie.mp4
 ```

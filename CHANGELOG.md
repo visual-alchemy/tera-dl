@@ -4,6 +4,8 @@ All notable changes to tera-dl.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-26
+
 ### Added
 - `tera dl` / `tera-dl`: `--retries N` runs retry passes for sources that had
   failures; completed files are skipped by size, and the command exits `1` if
@@ -22,14 +24,32 @@ All notable changes to tera-dl.
 - TUI: `(loading...)` and `(empty)` placeholders, marked rows highlighted,
   middle-truncated filenames that keep their extension
 - TUI: status bar split into path/message and selected-file info (size, date)
+- `make venv` for systems where the Python install is not writable; `make
+  update` for pull + reinstall + tests; `make install`, `make test`
+- `_view_android` uses `tempfile.gettempdir()` instead of a hard-coded
+  Termux path, so it also works under proot/chroot
 
 ### Changed
+- `tera view` and the TUI `v` key now share one player picker
+  (`tera/viewer.py`): `termux-open`, then `mpv`, then `open`/`xdg-open`.
+  Desktop Linux/macOS no longer dead-end when mpv is missing.
+- `textual` floor raised from `>=0.40` to `>=0.86`: `App.theme` and the theme
+  variables in `tui.tcss` only exist from 0.86, so older installs crashed.
 - TUI styles moved to `tera/tui.tcss`; panes use border titles instead of a
   separate header row, saving a line per pane
 - TUI file list migrated to `DataTable` with Name/Size/Modified columns
   (right-aligned sizes, date column, row cursor)
 - Pane listing no longer calls `query_one` from the worker thread; the worker
   returns entries and the UI updates on the main thread
+- TUI `v` no longer spawns the player itself; it stores the request and
+  `run_tui()` opens it after the app exits, so the terminal is not painted over
+
+### Fixed
+- `tera tui` crashed on Textual 0.40–0.85 (`App.theme` missing); the floor is
+  now `textual>=0.86`
+- Desktop Linux/macOS without `mpv` could not open files at all; they now fall
+  back to `xdg-open` (Linux) or `open` (macOS), with a hint that only mpv can
+  forward the auth cookie
 
 ## [0.3.0] — 2026-11-22
 

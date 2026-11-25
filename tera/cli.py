@@ -1,18 +1,16 @@
 import click
 import os
-from pathlib import Path
 
 from . import __version__
 from .config import Config
 from .auth import login_interactive, verify_auth, AuthError
 from .client import TeraBoxClient, TeraBoxError
-from .downloader import download_single, download_from_share, download_files
+from .downloader import download_single, download_files
 from .uploader import upload_file, sync_local_dir
 from .formatter import (
     console,
     print_file_list,
     print_user_info,
-    print_download_summary,
     print_share_info,
 )
 
@@ -289,12 +287,10 @@ def view_file(ctx, path):
     """Stream a file from TeraBox to your video player.
 
     Gets a direct download link and opens it in an external player.
-    On Android/Termux: tries mpv-android, then system video player.
-    On desktop: uses mpv with auth headers.
+    On Android/Termux: downloads to temp, then opens it.
+    On desktop: opens in mpv (or the system opener) with auth headers.
     """
-    import subprocess
     import shutil
-    import platform
 
     from .config import HEADERS
     config = get_config(ctx)
@@ -310,35 +306,31 @@ def view_file(ctx, path):
         raise click.Abort()
 
     name = path.rstrip("/").split("/")[-1]
-    ext = os.path.splitext(name)[1].lower()
     cookie = config.auth.cookie_string()
     ua = HEADERS["User-Agent"]
 
-    is_android = shutil.which("termux-open") is not None
-
-    if is_android:
-        _view_android(client, dlink, name, ext, cookie)
+    if shutil.which("termux-open"):
+        _view_android(client, dlink, name, cookie)
     else:
-        _view_desktop(dlink, name, ext, cookie, ua)
+        _view_desktop(dlink, name, cookie, ua)
 
 
-def _view_android(client, dlink: str, name: str, ext: str, cookie: str) -> None:
-    """Download to temp, then open in mpv-android (avoids slow CDN streaming)."""
-    import subprocess
-    import tempfile
+def _view_android(client, dlink: str, name: str, cookie: str) -> None:
+    """Download to temp, then open it (avoids slow CDN streaming)."""
     import glob as _glob
+    import tempfile
     import time as _time
     import shutil as _shutil
-    import os as _os
 
+    from . import viewer
     from .downloader import download_files
 
-    tmpdir = _os.environ.get("TMPDIR", "/data/data/com.termux/files/usr/tmp")
+    tmpdir = tempfile.gettempdir()
     # Cleanup temp dirs older than 1 hour
     cutoff = _time.time() - 3600
-    for old in _glob.glob(_os.path.join(tmpdir, "teraview_*")):
+    for old in _glob.glob(os.path.join(tmpdir, "teraview_*")):
         try:
-            if _os.path.getmtime(old) < cutoff:
+            if os.path.getmtime(old) < cutoff:
                 _shutil.rmtree(old, ignore_errors=True)
         except Exception:
             pass
@@ -349,65 +341,38 @@ def _view_android(client, dlink: str, name: str, ext: str, cookie: str) -> None:
     try:
         results = download_files(client=client, urls_names_sizes=[(dlink, name, 0)],
                                  dest_dir=dest, workers=4)
-        if results and results[0].status == "done":
-            local_path = _os.path.join(dest, name)
-            console.print(f"[green]Opening: {name}[/green]")
-            subprocess.Popen(
-                ["am", "start", "--user", "0",
-                 "-a", "android.intent.action.VIEW",
-                 "-d", f"file://{local_path}",
-                 "-n", "is.xyz.mpv/.MPVActivity",
-                 "-t", "video/*"],
-                start_new_session=True,
-            )
-        else:
-            # Fallback: stream directly
-            console.print(f"[yellow]Download skipped, streaming directly[/yellow]")
-            _view_android_stream(dlink, name)
     except Exception:
-        _view_android_stream(dlink, name)
+        results = []
 
-
-def _view_android_stream(dlink: str, name: str) -> None:
-    """Stream directly in mpv-android (fallback)."""
-    import subprocess
-
-    result = subprocess.run(
-        ["am", "start", "--user", "0",
-         "-a", "android.intent.action.VIEW",
-         "-d", dlink,
-         "-n", "is.xyz.mpv/.MPVActivity"],
-        capture_output=True, timeout=5,
-    )
-    if result.returncode == 0:
-        console.print(f"[green]Streaming in mpv-android: {name}[/green]")
-        return
-    subprocess.Popen(["termux-open", "--view", dlink])
-    console.print(f"[green]Opening: {name}[/green]")
-
-
-def _view_desktop(dlink: str, name: str, ext: str, cookie: str, ua: str) -> None:
-    """Open dlink in mpv on desktop Linux."""
-    import subprocess
-    import shutil
-
-    viewer = shutil.which("mpv")
-    if not viewer:
-        viewer = shutil.which("termux-open")
-        if viewer:
-            subprocess.Popen([viewer, "--view", dlink])
+    if results and results[0].status == "done":
+        local_path = os.path.join(dest, name)
+        used = viewer.open_target(local_path, local=True)
+        if used:
             console.print(f"[green]Opening: {name}[/green]")
             return
-        console.print("[red]No player found. Install mpv.[/red]")
+        console.print(f"[red]No player found. Install mpv: pkg install mpv[/red]")
         return
 
-    headers = f"Cookie: {cookie}\nUser-Agent: {ua}"
-    console.print(f"[green]Streaming in mpv: {name}[/green]")
-    subprocess.Popen([
-        viewer, dlink,
-        f"--force-media-title={name}",
-        f"--http-header-fields={headers}",
-    ], start_new_session=True)
+    console.print("[yellow]Download skipped, streaming directly[/yellow]")
+    used = viewer.open_target(dlink, title=name, cookie=cookie)
+    if used:
+        console.print(f"[green]Streaming: {name}[/green]")
+    else:
+        console.print(f"[red]No player found. Install mpv: pkg install mpv[/red]")
+
+
+def _view_desktop(dlink: str, name: str, cookie: str, ua: str) -> None:
+    """Open dlink in a local player (mpv preferred)."""
+    from . import viewer
+
+    used = viewer.open_target(dlink, title=name, cookie=cookie, ua=ua)
+    if not used:
+        console.print("[red]No player found. Install mpv.[/red]")
+        return
+    console.print(f"[green]Streaming in {used}: {name}[/green]")
+    if used in ("xdg-open", "open"):
+        # Those cannot forward the cookie, so TeraBox may refuse the stream.
+        console.print("[yellow]Install mpv to stream authenticated links.[/yellow]")
 
 
 @main.command("tui")

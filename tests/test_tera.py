@@ -333,7 +333,7 @@ class TestViewAndroid(unittest.TestCase):
         with mock.patch.object(downloader_mod, "download_files", fake_download_files), \
                 mock.patch("subprocess.Popen"), \
                 mock.patch.dict(os.environ, {"TMPDIR": tmp}):
-            cli_mod._view_android(None, "https://example.test/dlink", "v.mp4", ".mp4", "ndus=x")
+            cli_mod._view_android(None, "https://example.test/dlink", "v.mp4", "ndus=x")
 
         self.assertEqual(captured["urls_names_sizes"][0][:2], ("https://example.test/dlink", "v.mp4"))
 

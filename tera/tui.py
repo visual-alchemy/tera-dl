@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import requests
-from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -23,7 +22,8 @@ from . import __version__
 from .client import TeraBoxClient, TeraBoxError
 from .config import Config, HEADERS
 from .uploader import upload_file
-from .formatter import format_size, format_size_short, format_timestamp
+from .formatter import console, format_size, format_size_short, format_timestamp
+from .viewer import IMAGE_EXTS
 
 
 def _short_path(path: str, is_local: bool) -> str:
@@ -535,7 +535,8 @@ class TeraBoxTUI(App):
         self._active = "local"
         self._refresh_lock: dict[str, bool] = {}  # debounce per-pane refreshes
         self._ratio = 0.5
-        self._pending_view: Optional[dict] = None  # {dlink, name, cookie, ua, viewer}
+        # Handed to run_tui() after the app exits: open_target() kwargs.
+        self._pending_view: Optional[dict] = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -823,8 +824,6 @@ class TeraBoxTUI(App):
 
     @work(thread=True)
     def _do_view(self, backend: PaneBackend, entry: FileEntry) -> None:
-        import shutil
-
         path = entry.path
         name = entry.name
         ext = os.path.splitext(name)[1].lower()
@@ -836,36 +835,24 @@ class TeraBoxTUI(App):
             else:
                 dlink = path
 
-            if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}:
-                viewer = shutil.which("termux-open")
-                if viewer:
-                    self._pending_view = {"dlink": dlink, "name": name,
-                                          "cookie": "", "ua": "",
-                                          "viewer": "termux-open"}
-                    self.call_from_thread(self.exit)
-                    return
+            from .config import HEADERS
+            from . import viewer
 
-            viewer = shutil.which("mpv")
-            if viewer:
-                from .config import HEADERS
-                self._pending_view = {
-                    "dlink": dlink, "name": name,
-                    "cookie": self.config.auth.cookie_string(),
-                    "ua": HEADERS["User-Agent"],
-                    "viewer": "mpv",
-                }
-                self.call_from_thread(self.exit)
-                return
-
-            viewer = shutil.which("termux-open")
-            if viewer:
-                self._pending_view = {"dlink": dlink, "name": name,
-                                      "cookie": "", "ua": "",
-                                      "viewer": "termux-open"}
-                self.call_from_thread(self.exit)
-                return
-
-            self.call_from_thread(self._status, "[red]No player. Install mpv: pkg install mpv[/red]")
+            local = backend.is_local
+            # Images go to the system viewer on Android only: desktop openers
+            # cannot forward the auth cookie, so mpv is the safer default there.
+            external_ok = local or viewer.available() == "termux-open"
+            # Deferred: opening a player while the TUI owns the terminal paints
+            # over it, so quit first and let run_tui() launch it.
+            self._pending_view = {
+                "target": dlink,
+                "title": name,
+                "cookie": "" if local else self.config.auth.cookie_string(),
+                "ua": "" if local else HEADERS["User-Agent"],
+                "local": local,
+                "prefer_external": external_ok and ext in IMAGE_EXTS,
+            }
+            self.call_from_thread(self.exit)
         except Exception as e:
             self.call_from_thread(self._status, f"[red]View failed: {e}[/red]")
 
@@ -1154,41 +1141,13 @@ class TeraBoxTUI(App):
 
 
 def run_tui(config: Config) -> None:
-    import subprocess
-    import shutil
-
     client = TeraBoxClient(config)
     app = TeraBoxTUI(client, config)
     app.run()
 
     pending = app._pending_view
     if pending:
-        dlink = pending["dlink"]
-        name = pending["name"]
-        if pending["viewer"] == "termux-open":
-            subprocess.Popen(
-                ["termux-open", "--view", dlink],
-                start_new_session=True,
-            )
-        elif pending["viewer"] == "mpv":
-            is_android = shutil.which("termux-open") is not None
-            if is_android:
-                result = subprocess.run(
-                    ["am", "start", "--user", "0",
-                     "-a", "android.intent.action.VIEW",
-                     "-d", dlink,
-                     "-n", "is.xyz.mpv/.MPVActivity"],
-                    capture_output=True, timeout=5,
-                )
-                if result.returncode != 0:
-                    subprocess.Popen(
-                        ["termux-open", "--view", dlink],
-                        start_new_session=True,
-                    )
-            else:
-                headers = f"Cookie: {pending['cookie']}\nUser-Agent: {pending['ua']}"
-                subprocess.Popen([
-                    "mpv", dlink,
-                    f"--force-media-title={name}",
-                    f"--http-header-fields={headers}",
-                ], start_new_session=True)
+        from . import viewer
+
+        if not viewer.open_target(**pending):
+            console.print("[red]No player found. Install mpv.[/red]")
